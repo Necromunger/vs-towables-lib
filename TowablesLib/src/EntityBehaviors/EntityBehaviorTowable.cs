@@ -119,12 +119,16 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         entity.WatchedAttributes.SetLong(HitchEntityIdAttribute, entityId);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
+        MarkChunkModified();
     }
 
     private void ClearHitch()
     {
+        cachedHitchEntityId = 0;
+        cachedHitchPointSelectionBoxIndex = -1;
         entity.WatchedAttributes.RemoveAttribute(HitchEntityIdAttribute);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
+        MarkChunkModified();
     }
 
     private void FollowHitch(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
@@ -191,5 +195,13 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         return pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>()?.GetCenterPosOfBox(selectionBoxIndex) ?? pointEntity.ServerPos.XYZ;
+    }
+
+    private void MarkChunkModified()
+    {
+        if (entity.World.Side == EnumAppSide.Server)
+        {
+            entity.World.BlockAccessor.GetChunkAtBlockPos(entity.Pos.AsBlockPos)?.MarkModified();
+        }
     }
 }
