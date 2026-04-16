@@ -14,6 +14,7 @@ public class EntityBehaviorTowable : EntityBehavior
     public float SearchRange { get; private set; } = 4f;
     public float FollowSpeed { get; private set; } = 0.04f;
     public float FollowSmoothing { get; private set; } = 6f;
+    public float FollowBrakeSmoothing { get; private set; } = 16f;
     public float MaxHitchDistance { get; private set; } = 20f;
     public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
     public bool IsHitched => HitchEntityId > 0;
@@ -35,6 +36,7 @@ public class EntityBehaviorTowable : EntityBehavior
         SearchRange = attributes?["searchRange"].AsFloat(SearchRange) ?? SearchRange;
         FollowSpeed = attributes?["followSpeed"].AsFloat(FollowSpeed) ?? FollowSpeed;
         FollowSmoothing = attributes?["followSmoothing"].AsFloat(FollowSmoothing) ?? FollowSmoothing;
+        FollowBrakeSmoothing = attributes?["followBrakeSmoothing"].AsFloat(FollowBrakeSmoothing) ?? FollowBrakeSmoothing;
         MaxHitchDistance = attributes?["maxHitchDistance"].AsFloat(MaxHitchDistance) ?? MaxHitchDistance;
     }
 
@@ -190,7 +192,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         if (insideDistanceBand)
         {
-            EaseTowableMovementToZero(deltaTime);
+            EaseTowableMovementToZero(deltaTime, FollowBrakeSmoothing);
             return;
         }
 
@@ -204,41 +206,43 @@ public class EntityBehaviorTowable : EntityBehavior
 
         if (entity is EntityAgent agent)
         {
-            FollowHitchWithControls(agent, movement, deltaTime);
+            FollowHitchWithControls(agent, movement, deltaTime, moveBackward);
             return;
         }
 
-        FollowHitchWithMotion(movement, deltaTime);
+        FollowHitchWithMotion(movement, deltaTime, moveBackward);
     }
 
-    private void FollowHitchWithControls(EntityAgent agent, Vec3d movement, float deltaTime)
+    private void FollowHitchWithControls(EntityAgent agent, Vec3d movement, float deltaTime, bool isTooClose)
     {
         StopEntityControls(agent);
 
         double horizontalDistance = Math.Sqrt(movement.X * movement.X + movement.Z * movement.Z);
         if (horizontalDistance < 0.025)
         {
-            EaseTowableMovementToZero(deltaTime);
+            EaseTowableMovementToZero(deltaTime, FollowBrakeSmoothing);
             return;
         }
 
-        double speed = Math.Min(FollowSpeed, horizontalDistance);
-        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime);
+        double speed = FollowSpeed;
+        float smoothing = isTooClose ? FollowBrakeSmoothing : FollowSmoothing;
+        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime, smoothing);
 
         agent.ServerControls.WalkVector.Set(smoothedMovement.X, 0, smoothedMovement.Z);
     }
 
-    private void FollowHitchWithMotion(Vec3d movement, float deltaTime)
+    private void FollowHitchWithMotion(Vec3d movement, float deltaTime, bool isTooClose)
     {
         double horizontalDistance = Math.Sqrt(movement.X * movement.X + movement.Z * movement.Z);
         if (horizontalDistance < 0.025)
         {
-            EaseTowableMovementToZero(deltaTime);
+            EaseTowableMovementToZero(deltaTime, FollowBrakeSmoothing);
             return;
         }
 
-        double speed = Math.Min(FollowSpeed, horizontalDistance);
-        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime);
+        double speed = FollowSpeed;
+        float smoothing = isTooClose ? FollowBrakeSmoothing : FollowSmoothing;
+        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime, smoothing);
 
         entity.ServerPos.Motion.X = smoothedMovement.X;
         entity.ServerPos.Motion.Z = smoothedMovement.Z;
@@ -257,9 +261,9 @@ public class EntityBehaviorTowable : EntityBehavior
         entity.ServerPos.Motion.Z = 0;
     }
 
-    private void EaseTowableMovementToZero(float deltaTime)
+    private void EaseTowableMovementToZero(float deltaTime, float smoothing)
     {
-        UpdateSmoothedMovement(0, 0, deltaTime);
+        UpdateSmoothedMovement(0, 0, deltaTime, smoothing);
 
         if (Math.Abs(smoothedMovement.X) < 0.001 && Math.Abs(smoothedMovement.Z) < 0.001)
         {
@@ -279,9 +283,9 @@ public class EntityBehaviorTowable : EntityBehavior
         entity.ServerPos.Motion.Z = smoothedMovement.Z;
     }
 
-    private void UpdateSmoothedMovement(double targetX, double targetZ, float deltaTime)
+    private void UpdateSmoothedMovement(double targetX, double targetZ, float deltaTime, float smoothing)
     {
-        float lerp = Math.Min(1f, deltaTime * FollowSmoothing);
+        float lerp = Math.Min(1f, deltaTime * smoothing);
         smoothedMovement.X = GameMath.Lerp(smoothedMovement.X, targetX, lerp);
         smoothedMovement.Z = GameMath.Lerp(smoothedMovement.Z, targetZ, lerp);
     }
