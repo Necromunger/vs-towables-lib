@@ -160,7 +160,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private void FollowHitch(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
     {
-        Vec3d towPoint = GetEntityOriginPosition(entity);
+        Vec3d towPoint = GetTowPointPosition(); // was GetEntityOriginPosition(entity)
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
         Vec3d correction = hitchPoint.SubCopy(towPoint);
 
@@ -175,23 +175,20 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        if (currentDistance < 0.001)
-        {
-            StopTowableMovement();
-            return;
-        }
-
         if (currentDistance < 2.0)
         {
             StopTowableMovement();
             return;
         }
 
-        double speed = Math.Min(currentDistance * LatchSpeed * deltaTime, 1.0);
+        double slack = currentDistance - 2.0;
+        double normalised = Math.Min(slack / (MaxHitchDistance - 2.0), 1.0);
+        double speed = Math.Pow(normalised, 0.3) * LatchSpeed * deltaTime;
+        
         Vec3d dir = new Vec3d(correction.X, 0, correction.Z);
         dir.Normalize();
 
-        if (entity is EntityAgent agent)
+        if (entity is EntityAgent agent) //TODO: add requirement for EntityAgent from the start in hitch
         {
             agent.ServerControls.WalkVector.Set(dir.X * speed, 0, dir.Z * speed);
         }
@@ -206,6 +203,18 @@ public class EntityBehaviorTowable : EntityBehavior
             agent.ServerControls.StopAllMovement();
             agent.ServerControls.WalkVector.Set(0, 0, 0);
         }
+    }
+
+    private Vec3d GetTowPointPosition()
+    {
+        var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
+        if (selectionBoxes != null && towPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex < selectionBoxes.Length)
+        {
+            var ap = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
+            Vec3d offset = new Vec3d(ap.PosX / 16.0, ap.PosY / 16.0, ap.PosZ / 16.0);
+            return GetOffsetPosition(entity, offset);
+        }
+        return entity.ServerPos.XYZ;
     }
 
     private static void StopEntityControls(EntityAgent agent)

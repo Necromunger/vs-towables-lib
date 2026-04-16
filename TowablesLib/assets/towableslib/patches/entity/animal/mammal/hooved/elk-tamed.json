@@ -4,7 +4,7 @@
     "path": "/behaviorConfigs/hitchable",
     "value": {
       "hitchPoint": "RearAP",
-      "hitchOffset": { "x": 0, "y": 0, "z": -2 }
+      "hitchOffset": { "x": 0, "y": 0, "z": -1 }
     },
     "file": "game:entities/animal/mammal/hooved/elk-tamed"
   },
