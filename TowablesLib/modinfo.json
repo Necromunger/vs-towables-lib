@@ -1,0 +1,13 @@
+{
+    "type": "code",
+    "modid": "towableslib",
+    "name": "TowablesLib",
+    "authors": [
+        "Necromunger"
+    ],
+    "description": "Object towing library",
+    "version": "1.0.0",
+    "dependencies": {
+        "game": ""
+    }
+}

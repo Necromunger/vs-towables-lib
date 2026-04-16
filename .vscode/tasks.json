@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build mod (Debug)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/TowablesLib/TowablesLib.csproj",
+        "--configuration",
+        "Debug"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build",
+      "detail": "Builds TowablesLib into bin/Debug/Mods."
+    },
+    {
+      "label": "build mod (Release)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/TowablesLib/TowablesLib.csproj",
+        "--configuration",
+        "Release"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build",
+      "detail": "Builds TowablesLib in Release configuration."
+    },
+    {
+      "label": "package release",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/ZZCakeBuild/CakeBuild.csproj",
+        "--",
+        "--target=Default",
+        "--configuration=Release"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build",
+      "detail": "Runs CakeBuild and creates the release zip."
+    }
+  ]
+}

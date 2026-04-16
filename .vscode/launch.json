@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Vintage Story Client",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "dotnet",
+      "args": [
+        "${env:VINTAGE_STORY}/Vintagestory.dll",
+        "--tracelog",
+        "--addModPath",
+        "${workspaceFolder}/TowablesLib/bin/Debug/Mods",
+        "--addOrigin",
+        "${workspaceFolder}/TowablesLib/assets"
+      ],
+      "cwd": "${env:VINTAGE_STORY}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "preLaunchTask": "build mod (Debug)"
+    },
+    {
+      "name": "Vintage Story Server",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "dotnet",
+      "args": [
+        "${env:VINTAGE_STORY}/VintagestoryServer.dll",
+        "--tracelog",
+        "--addModPath",
+        "${workspaceFolder}/TowablesLib/bin/Debug/Mods",
+        "--addOrigin",
+        "${workspaceFolder}/TowablesLib/assets"
+      ],
+      "cwd": "${env:VINTAGE_STORY}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "preLaunchTask": "build mod (Debug)"
+    }
+  ]
+}
