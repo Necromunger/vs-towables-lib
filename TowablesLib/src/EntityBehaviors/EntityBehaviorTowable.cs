@@ -13,7 +13,7 @@ public class EntityBehaviorTowable : EntityBehavior
     public string TowPoint { get; private set; } = "TowAP";
     public float SearchRange { get; private set; } = 4f;
     public float FollowSpeed { get; private set; } = 0.04f;
-    public float FollowStrength { get; private set; } = 12f;
+    public float FollowSmoothing { get; private set; } = 6f;
     public float MaxHitchDistance { get; private set; } = 20f;
     public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
     public bool IsHitched => HitchEntityId > 0;
@@ -23,9 +23,8 @@ public class EntityBehaviorTowable : EntityBehavior
     private const string HitchEntityIdAttribute = "towableslib:hitchEntityId";
     private int interactionPointSelectionBoxIndex = -1;
     private int towPointSelectionBoxIndex = -1;
-    private long cachedHitchEntityId;
-    private int cachedHitchPointSelectionBoxIndex = -1;
     private bool loggedFirstTickSelectionBoxState;
+    private readonly Vec3d smoothedMovement = new Vec3d();
 
     public override void Initialize(EntityProperties properties, JsonObject attributes)
     {
@@ -35,7 +34,7 @@ public class EntityBehaviorTowable : EntityBehavior
         TowPoint = attributes?["towPoint"].AsString(TowPoint) ?? TowPoint;
         SearchRange = attributes?["searchRange"].AsFloat(SearchRange) ?? SearchRange;
         FollowSpeed = attributes?["followSpeed"].AsFloat(FollowSpeed) ?? FollowSpeed;
-        FollowStrength = attributes?["followStrength"].AsFloat(FollowStrength) ?? FollowStrength;
+        FollowSmoothing = attributes?["followSmoothing"].AsFloat(FollowSmoothing) ?? FollowSmoothing;
         MaxHitchDistance = attributes?["maxHitchDistance"].AsFloat(MaxHitchDistance) ?? MaxHitchDistance;
     }
 
@@ -156,8 +155,6 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private void ClearHitch()
     {
-        cachedHitchEntityId = 0;
-        cachedHitchPointSelectionBoxIndex = -1;
         StopTowableMovement();
         entity.WatchedAttributes.RemoveAttribute(HitchEntityIdAttribute);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
@@ -166,7 +163,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private void FollowHitch(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
     {
-        Vec3d towPoint = GetPointPosition(entity, towPointSelectionBoxIndex);
+        Vec3d towPoint = GetEntityOriginPosition(entity);
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
         Vec3d offset = towPoint.SubCopy(hitchPoint);
         offset.Y = 0;
@@ -188,57 +185,69 @@ public class EntityBehaviorTowable : EntityBehavior
             currentDistance = 1;
         }
 
-        if (currentDistance >= hitchable.MinDistance && currentDistance <= hitchable.MaxDistance)
+        bool insideDistanceBand = currentDistance >= hitchable.MinDistance && currentDistance <= hitchable.MaxDistance;
+        entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+
+        if (insideDistanceBand)
         {
-            StopTowableMovement();
+            EaseTowableMovementToZero(deltaTime);
             return;
         }
 
-        double desiredDistance = currentDistance < hitchable.MinDistance
-            ? hitchable.MinDistance
-            : hitchable.MaxDistance;
+        bool moveBackward = currentDistance < hitchable.MinDistance;
+        double desiredDistance = moveBackward ? hitchable.MinDistance : hitchable.MaxDistance;
 
         offset.Mul(desiredDistance / currentDistance);
 
         Vec3d targetTowPoint = new Vec3d(hitchPoint.X + offset.X, towPoint.Y, hitchPoint.Z + offset.Z);
         Vec3d movement = targetTowPoint.SubCopy(towPoint);
 
-        entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
-
         if (entity is EntityAgent agent)
         {
-            FollowHitchWithControls(agent, movement);
+            FollowHitchWithControls(agent, movement, deltaTime);
             return;
         }
 
         FollowHitchWithMotion(movement, deltaTime);
     }
 
-    private void FollowHitchWithControls(EntityAgent agent, Vec3d movement)
+    private void FollowHitchWithControls(EntityAgent agent, Vec3d movement, float deltaTime)
     {
         StopEntityControls(agent);
 
         double horizontalDistance = Math.Sqrt(movement.X * movement.X + movement.Z * movement.Z);
         if (horizontalDistance < 0.025)
         {
-            StopTowableMovement();
+            EaseTowableMovementToZero(deltaTime);
             return;
         }
 
         double speed = Math.Min(FollowSpeed, horizontalDistance);
-        agent.ServerControls.WalkVector.Set(movement.X / horizontalDistance * speed, 0, movement.Z / horizontalDistance * speed);
+        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime);
+
+        agent.ServerControls.WalkVector.Set(smoothedMovement.X, 0, smoothedMovement.Z);
     }
 
     private void FollowHitchWithMotion(Vec3d movement, float deltaTime)
     {
-        double moveFactor = Math.Min(1, deltaTime * FollowStrength);
+        double horizontalDistance = Math.Sqrt(movement.X * movement.X + movement.Z * movement.Z);
+        if (horizontalDistance < 0.025)
+        {
+            EaseTowableMovementToZero(deltaTime);
+            return;
+        }
 
-        entity.ServerPos.Motion.X = movement.X * moveFactor;
-        entity.ServerPos.Motion.Z = movement.Z * moveFactor;
+        double speed = Math.Min(FollowSpeed, horizontalDistance);
+        UpdateSmoothedMovement(movement.X / horizontalDistance * speed, movement.Z / horizontalDistance * speed, deltaTime);
+
+        entity.ServerPos.Motion.X = smoothedMovement.X;
+        entity.ServerPos.Motion.Z = smoothedMovement.Z;
     }
 
     private void StopTowableMovement()
     {
+        smoothedMovement.Set(0, 0, 0);
+
         if (entity is EntityAgent agent)
         {
             StopEntityControls(agent);
@@ -246,6 +255,35 @@ public class EntityBehaviorTowable : EntityBehavior
 
         entity.ServerPos.Motion.X = 0;
         entity.ServerPos.Motion.Z = 0;
+    }
+
+    private void EaseTowableMovementToZero(float deltaTime)
+    {
+        UpdateSmoothedMovement(0, 0, deltaTime);
+
+        if (Math.Abs(smoothedMovement.X) < 0.001 && Math.Abs(smoothedMovement.Z) < 0.001)
+        {
+            smoothedMovement.Set(0, 0, 0);
+            StopTowableMovement();
+            return;
+        }
+
+        if (entity is EntityAgent agent)
+        {
+            StopEntityControls(agent);
+            agent.ServerControls.WalkVector.Set(smoothedMovement.X, 0, smoothedMovement.Z);
+            return;
+        }
+
+        entity.ServerPos.Motion.X = smoothedMovement.X;
+        entity.ServerPos.Motion.Z = smoothedMovement.Z;
+    }
+
+    private void UpdateSmoothedMovement(double targetX, double targetZ, float deltaTime)
+    {
+        float lerp = Math.Min(1f, deltaTime * FollowSmoothing);
+        smoothedMovement.X = GameMath.Lerp(smoothedMovement.X, targetX, lerp);
+        smoothedMovement.Z = GameMath.Lerp(smoothedMovement.Z, targetZ, lerp);
     }
 
     private static void StopEntityControls(EntityAgent agent)
@@ -257,13 +295,12 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private Vec3d GetHitchPointPosition(Entity hitchEntity, EntityBehaviorHitchable hitchable)
     {
-        if (cachedHitchEntityId != hitchEntity.EntityId)
-        {
-            cachedHitchEntityId = hitchEntity.EntityId;
-            cachedHitchPointSelectionBoxIndex = FindSelectionBoxIndex(hitchEntity, hitchable.HitchPoint);
-        }
+        return GetOffsetPosition(hitchEntity, hitchable.HitchOffset);
+    }
 
-        return GetPointPosition(hitchEntity, cachedHitchPointSelectionBoxIndex);
+    private static Vec3d GetOffsetPosition(Entity pointEntity, Vec3d localOffset)
+    {
+        return pointEntity.ServerPos.XYZ.AddCopy(localOffset.RotatedCopy(pointEntity.ServerPos.Yaw));
     }
 
     private static int FindSelectionBoxIndex(Entity pointEntity, string pointCode)
@@ -283,24 +320,7 @@ public class EntityBehaviorTowable : EntityBehavior
         return -1;
     }
 
-    private static Vec3d GetPointPosition(Entity pointEntity, int selectionBoxIndex)
-    {
-        if (selectionBoxIndex < 0)
-        {
-            return pointEntity.ServerPos.XYZ;
-        }
-
-        //var be_selectionBoxes = pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>();
-        //if (be_selectionBoxes != null)
-        // {
-        //    AttachmentPointAndPose selection = be_selectionBoxes.selectionBoxes[selectionBoxIndex];
-        //    ShapeElement parentElement = selection.AttachPoint.ParentElement;
-        //
-        //    return be_selectionBoxes.GetCenterPosOfBox(selectionBoxIndex);
-        //}
-
-        return pointEntity.ServerPos.XYZ;
-    }
+    private static Vec3d GetEntityOriginPosition(Entity pointEntity) => pointEntity.ServerPos.XYZ;
 
     private void MarkChunkModified()
     {

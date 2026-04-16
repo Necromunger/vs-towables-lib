@@ -12,6 +12,7 @@ Belongs on the entity that can pull something.
 behaviorConfigs: {
   hitchable: {
     hitchPoint: "HitchAP",
+    hitchOffset: { x: 0, y: 0, z: -1.2 },
     distance: 2.5,
     minDistance: 1.8,
     maxDistance: 3.2
@@ -19,7 +20,9 @@ behaviorConfigs: {
 }
 ```
 
-`distance` is the preferred maintained distance from the hitchable's `hitchPoint` to the towable's `towPoint`.
+`distance` is the preferred maintained distance from the hitchable's effective pull point to the towable's `towPoint`.
+
+`hitchOffset` is optional. It is a local position offset from the hitchable entity origin and turns with the hitchable. Use it to place the effective pull point behind, beside, or in front of the pulling entity without depending on server-side selection box position helpers.
 
 `minDistance` is the closest the towable should get before it is pushed back or prevented from collapsing into the hitchable.
 
@@ -36,8 +39,7 @@ behaviorConfigs: {
     towPoint: "TowAP",
     searchRange: 4,
     followSpeed: 0.08,
-    maxHitchDistance: 20,
-    followStrength: 8
+    maxHitchDistance: 20
   },
   selectionboxes: {
     selectionBoxes: ["TowAP"]
@@ -48,8 +50,6 @@ behaviorConfigs: {
 `followSpeed` is optional. For towables that are `EntityAgent`s, this is the movement speed passed through entity controls so controlled physics can handle ground movement and stepping.
 
 `maxHitchDistance` is optional. If the towable gets this far from the hitchable, the hitch is cleared.
-
-`followStrength` is optional. It is used as the correction rate for non-agent towables that have to fall back to direct motion.
 
 ## Shape Attachment Points
 

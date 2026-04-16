@@ -4,9 +4,10 @@
     "path": "/behaviorConfigs/hitchable",
     "value": {
       "hitchPoint": "RearAP",
-      "distance": 2.5,
-      "minDistance": 1.8,
-      "maxDistance": 3.2
+      "hitchOffset": { "x": 0, "y": 0, "z": 1 },
+      "distance": 2,
+      "minDistance": 1.5,
+      "maxDistance": 2.5
     },
     "file": "game:entities/animal/mammal/hooved/elk-tamed"
   },

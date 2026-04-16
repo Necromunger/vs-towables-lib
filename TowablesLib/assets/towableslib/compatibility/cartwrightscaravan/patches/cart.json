@@ -6,9 +6,8 @@
       "interactionPoint": "MainGripAP",
       "towPoint": "MainGripAP",
       "searchRange": 4,
-      "followSpeed": 0.14,
-      "maxHitchDistance": 20,
-      "followStrength": 8
+      "followSpeed": 0.22,
+      "maxHitchDistance": 20
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },
