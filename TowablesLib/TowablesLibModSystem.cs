@@ -12,6 +12,7 @@ namespace TowablesLib
         public override void Start(ICoreAPI api)
         {
             api.RegisterEntityBehaviorClass("hitchable", typeof(EntityBehaviorHitchable));
+            api.RegisterEntityBehaviorClass("towable", typeof(EntityBehaviorTowable));
         }
     }
 }
