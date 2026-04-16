@@ -17,6 +17,10 @@ public class EntityBehaviorTowable : EntityBehavior
     public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
     public bool IsHitched => HitchEntityId > 0;
 
+    public float MinFollowDistance { get; private set; } = 1.0f;  // dead zone
+    public float RopeSlackOrigin { get; private set; } = 1.0f;    // where tension starts
+    public float AccelerationCurve { get; private set; } = 0.3f;  // <1 fast ramp, >1 slow ramp
+
     public EntityBehaviorTowable(Entity entity) : base(entity) { }
 
     private const string HitchEntityIdAttribute = "towableslib:hitchEntityId";
@@ -175,15 +179,11 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        if (currentDistance < 2.0)
-        {
-            StopTowableMovement();
-            return;
-        }
+        if (currentDistance < MinFollowDistance) { StopTowableMovement(); return; }
 
-        double slack = currentDistance - 2.0;
-        double normalised = Math.Min(slack / (MaxHitchDistance - 2.0), 1.0);
-        double speed = Math.Pow(normalised, 0.3) * LatchSpeed * deltaTime;
+        double slack = currentDistance - RopeSlackOrigin;
+        double normalised = Math.Min(slack / (MaxHitchDistance - RopeSlackOrigin), 1.0);
+        double speed = Math.Pow(normalised, AccelerationCurve) * LatchSpeed * deltaTime;
         
         Vec3d dir = new Vec3d(correction.X, 0, correction.Z);
         dir.Normalize();
