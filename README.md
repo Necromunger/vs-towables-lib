@@ -34,13 +34,16 @@ behaviorConfigs: {
   towable: {
     interactionPoint: "TowAP",
     towPoint: "TowAP",
-    searchRange: 4
+    searchRange: 4,
+    followStrength: 8
   },
   selectionboxes: {
     selectionBoxes: ["TowAP"]
   }
 }
 ```
+
+`followStrength` is optional. Higher values make the towable correct toward its target position more quickly; lower values feel looser. Most entities can omit it.
 
 ## Shape Attachment Points
 
