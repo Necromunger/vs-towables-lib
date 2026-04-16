@@ -13,7 +13,7 @@ public class EntityBehaviorTowable : EntityBehavior
     public string InteractionPoint { get; private set; } = "TowAP";
     public string TowPoint { get; private set; } = "TowAP";
     public float SearchRange { get; private set; } = 4f;
-    public float FollowStrength { get; private set; } = 8f;
+    public float FollowStrength { get; private set; } = 12f;
     public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
     public bool IsHitched => HitchEntityId > 0;
 
@@ -36,49 +36,39 @@ public class EntityBehaviorTowable : EntityBehavior
         FollowStrength = attributes?["followStrength"].AsFloat(FollowStrength) ?? FollowStrength;
     }
 
-    public override void AfterInitialized(bool onFirstSpawn)
-    {
-        base.AfterInitialized(onFirstSpawn);
-
-        interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
-        towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
-        LogSelectionBoxState("after init");
-    }
-
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
     {
-        int selectionBoxIndex = (byEntity as EntityPlayer)?.EntitySelection?.SelectionBoxIndex ?? -1;
-        entity.World.Logger.Notification(
-            "[TowablesLib] OnInteract {0} on {1}. mode={2}, selectedBox={3}, interactionIndex={4}, handled={5}",
-            entity.World.Side,
-            entity.Code,
-            mode,
-            selectionBoxIndex,
-            interactionPointSelectionBoxIndex,
-            handled
-        );
-
-        if (mode != EnumInteractMode.Interact || !IsInteractionPoint(byEntity))
-        {
-            entity.World.Logger.Notification(
-                "[TowablesLib] OnInteract ignored on {0}. mode={1}, selectedBox={2}, expectedSelectedBox={3}",
-                entity.Code,
-                mode,
-                selectionBoxIndex,
-                interactionPointSelectionBoxIndex + 1
-            );
-
+        // fail - not interact mode or not server side
+        if (mode != EnumInteractMode.Interact || entity.World.Side != EnumAppSide.Server) {
             base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
         }
 
-        handled = EnumHandling.PreventSubsequent;
-        entity.World.Logger.Notification("[TowablesLib] OnInteract accepted on {0}", entity.Code);
-
-        if (entity.World.Side != EnumAppSide.Server)
+        // fail - no entity selected
+        int selectionBoxIndex = (byEntity as EntityPlayer)?.EntitySelection?.SelectionBoxIndex ?? -1;
+        if (selectionBoxIndex < 0)
         {
+            base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
         }
+
+        // fail - no selection box found for interaction point
+        if (!IsInteractionPoint(byEntity))
+        {
+            entity.World.Logger.Notification(
+                "[TowablesLib] OnInteract ignored on {0} selectedBox={1}, expectedSelectedBox={2}",
+                entity.Code, selectionBoxIndex, interactionPointSelectionBoxIndex
+            );
+            base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
+            return;
+        }
+
+        entity.World.Logger.Notification(
+            "[TowablesLib] OnInteract on {0} selectedBox={1}, interactionIndex={2}",
+            entity.Code, selectionBoxIndex, interactionPointSelectionBoxIndex
+        );
+
+        handled = EnumHandling.Handled;
 
         if (IsHitched)
         {
@@ -87,10 +77,12 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
+        // fail - no hitchable found nearby
         Entity hitchEntity = FindNearestHitchable();
         if (hitchEntity == null)
         {
             entity.World.Logger.Notification("[TowablesLib] No hitchable found near {0}", entity.Code);
+            base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
         }
 
@@ -102,18 +94,15 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         base.OnGameTick(deltaTime);
 
-        if (entity.World.Side != EnumAppSide.Server || !IsHitched)
+        // Client and server both setup here
+        // OnInit OnSpawned and all the rest had no selection box info, need to find real onload point with selection box info available to cache the indexes
+        if (!loggedFirstTickSelectionBoxState)
         {
-            if (!loggedFirstTickSelectionBoxState)
-            {
-                loggedFirstTickSelectionBoxState = true;
-                RefreshSelectionBoxesIfNeeded();
-                interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
-                towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
-                LogSelectionBoxState("first tick");
-            }
-
-            return;
+            loggedFirstTickSelectionBoxState = true;
+            RefreshSelectionBoxesIfNeeded();
+            interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
+            towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
+            LogSelectionBoxState("first tick");
         }
 
         Entity hitchEntity = entity.World.GetEntityById(HitchEntityId);
@@ -190,6 +179,7 @@ public class EntityBehaviorTowable : EntityBehavior
         double moveFactor = Math.Min(1, deltaTime * FollowStrength);
 
         entity.ServerPos.X += movement.X * moveFactor;
+        entity.ServerPos.Y += movement.Y * moveFactor;
         entity.ServerPos.Z += movement.Z * moveFactor;
         entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
     }
@@ -231,7 +221,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         //var be_selectionBoxes = pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>();
         //if (be_selectionBoxes != null)
-       // {
+        // {
         //    AttachmentPointAndPose selection = be_selectionBoxes.selectionBoxes[selectionBoxIndex];
         //    ShapeElement parentElement = selection.AttachPoint.ParentElement;
         //
