@@ -12,21 +12,12 @@ Belongs on the entity that can pull something.
 behaviorConfigs: {
   hitchable: {
     hitchPoint: "HitchAP",
-    hitchOffset: { x: 0, y: 0, z: -1.2 },
-    distance: 2.5,
-    minDistance: 1.8,
-    maxDistance: 3.2
+    hitchOffset: { x: 0, y: 0, z: -1.2 }
   }
 }
 ```
 
-`distance` is the preferred maintained distance from the hitchable's effective pull point to the towable's `towPoint`.
-
 `hitchOffset` is optional. It is a local position offset from the hitchable entity origin and turns with the hitchable. Use it to place the effective pull point behind, beside, or in front of the pulling entity without depending on server-side selection box position helpers.
-
-`minDistance` is the closest the towable should get before it is pushed back or prevented from collapsing into the hitchable.
-
-`maxDistance` is the farthest the towable should get before it is pulled along by the hitchable.
 
 ### towable
 
@@ -38,7 +29,7 @@ behaviorConfigs: {
     interactionPoint: "TowAP",
     towPoint: "TowAP",
     searchRange: 4,
-    followSpeed: 0.08,
+    latchSpeed: 30,
     maxHitchDistance: 20
   },
   selectionboxes: {
@@ -47,7 +38,7 @@ behaviorConfigs: {
 }
 ```
 
-`followSpeed` is optional. For towables that are `EntityAgent`s, this is the movement speed passed through entity controls so controlled physics can handle ground movement and stepping.
+`latchSpeed` is optional. It controls how quickly the towable snaps its anchor point toward the hitchable's effective pull point. Higher values behave more like a hard latch.
 
 `maxHitchDistance` is optional. If the towable gets this far from the hitchable, the hitch is cleared.
 
@@ -117,7 +108,7 @@ server: {
 
 The player interacts with the towable's `interactionPoint`. The towable scans nearby entities for a valid `hitchable`, stores that entity as its hitch target, then keeps its own `towPoint` aligned with the hitchable entity's `hitchPoint`.
 
-The hitchable owns the distance band because the pulling entity knows its own body size and working clearance. A goat, elk, polar bear, wagon, or tractor can each define different `minDistance`, `distance`, and `maxDistance` values for the same towable.
+The hitchable owns the hitch offset because the pulling entity knows its own body size and working clearance. A goat, elk, polar bear, wagon, or tractor can each define a different effective pull point for the same towable.
 
 ## Compatibility Targets
 

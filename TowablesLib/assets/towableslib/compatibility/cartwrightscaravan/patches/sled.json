@@ -12,7 +12,7 @@
       "interactionPoint": "TowAP",
       "towPoint": "TowAP",
       "searchRange": 4,
-      "followSpeed": 0.2,
+      "latchSpeed": 15,
       "maxHitchDistance": 20
     },
     "file": "cartwrightscaravan:entities/nonliving/sled"
