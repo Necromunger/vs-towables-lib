@@ -61,4 +61,10 @@
   </Content>
 </ItemGroup>
 
+<ItemGroup>
+  <Content Include="assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+  </Content>
+</ItemGroup>
+
 </Project>

@@ -1,4 +1,5 @@
 using System;
+using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Datastructures;
@@ -23,6 +24,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private int towPointSelectionBoxIndex = -1;
     private long cachedHitchEntityId;
     private int cachedHitchPointSelectionBoxIndex = -1;
+    private bool loggedFirstTickSelectionBoxState;
 
     public override void Initialize(EntityProperties properties, JsonObject attributes)
     {
@@ -40,17 +42,38 @@ public class EntityBehaviorTowable : EntityBehavior
 
         interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
         towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
+        LogSelectionBoxState("after init");
     }
 
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
     {
+        int selectionBoxIndex = (byEntity as EntityPlayer)?.EntitySelection?.SelectionBoxIndex ?? -1;
+        entity.World.Logger.Notification(
+            "[TowablesLib] OnInteract {0} on {1}. mode={2}, selectedBox={3}, interactionIndex={4}, handled={5}",
+            entity.World.Side,
+            entity.Code,
+            mode,
+            selectionBoxIndex,
+            interactionPointSelectionBoxIndex,
+            handled
+        );
+
         if (mode != EnumInteractMode.Interact || !IsInteractionPoint(byEntity))
         {
+            entity.World.Logger.Notification(
+                "[TowablesLib] OnInteract ignored on {0}. mode={1}, selectedBox={2}, expectedSelectedBox={3}",
+                entity.Code,
+                mode,
+                selectionBoxIndex,
+                interactionPointSelectionBoxIndex + 1
+            );
+
             base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
         }
 
         handled = EnumHandling.PreventSubsequent;
+        entity.World.Logger.Notification("[TowablesLib] OnInteract accepted on {0}", entity.Code);
 
         if (entity.World.Side != EnumAppSide.Server)
         {
@@ -59,6 +82,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         if (IsHitched)
         {
+            entity.World.Logger.Notification("[TowablesLib] Clearing hitch on {0}", entity.Code);
             ClearHitch();
             return;
         }
@@ -66,9 +90,11 @@ public class EntityBehaviorTowable : EntityBehavior
         Entity hitchEntity = FindNearestHitchable();
         if (hitchEntity == null)
         {
+            entity.World.Logger.Notification("[TowablesLib] No hitchable found near {0}", entity.Code);
             return;
         }
 
+        entity.World.Logger.Notification("[TowablesLib] Hitching {0} to {1}", entity.Code, hitchEntity.Code);
         SetHitch(hitchEntity.EntityId);
     }
 
@@ -78,6 +104,15 @@ public class EntityBehaviorTowable : EntityBehavior
 
         if (entity.World.Side != EnumAppSide.Server || !IsHitched)
         {
+            if (!loggedFirstTickSelectionBoxState)
+            {
+                loggedFirstTickSelectionBoxState = true;
+                RefreshSelectionBoxesIfNeeded();
+                interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
+                towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
+                LogSelectionBoxState("first tick");
+            }
+
             return;
         }
 
@@ -194,7 +229,16 @@ public class EntityBehaviorTowable : EntityBehavior
             return pointEntity.ServerPos.XYZ;
         }
 
-        return pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>()?.GetCenterPosOfBox(selectionBoxIndex) ?? pointEntity.ServerPos.XYZ;
+        //var be_selectionBoxes = pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>();
+        //if (be_selectionBoxes != null)
+       // {
+        //    AttachmentPointAndPose selection = be_selectionBoxes.selectionBoxes[selectionBoxIndex];
+        //    ShapeElement parentElement = selection.AttachPoint.ParentElement;
+        //
+        //    return be_selectionBoxes.GetCenterPosOfBox(selectionBoxIndex);
+        //}
+
+        return pointEntity.ServerPos.XYZ;
     }
 
     private void MarkChunkModified()
@@ -202,6 +246,50 @@ public class EntityBehaviorTowable : EntityBehavior
         if (entity.World.Side == EnumAppSide.Server)
         {
             entity.World.BlockAccessor.GetChunkAtBlockPos(entity.Pos.AsBlockPos)?.MarkModified();
+        }
+    }
+
+    private void RefreshSelectionBoxesIfNeeded()
+    {
+        var selectionBoxesBehavior = entity.GetBehavior<EntityBehaviorSelectionBoxes>();
+        if (selectionBoxesBehavior == null || (selectionBoxesBehavior.selectionBoxes?.Length ?? 0) > 0)
+        {
+            return;
+        }
+
+        selectionBoxesBehavior.UpdateColSelBoxes();
+    }
+
+    private void LogSelectionBoxState(string phase)
+    {
+        var selectionBoxesBehavior = entity.GetBehavior<EntityBehaviorSelectionBoxes>();
+        var selectionBoxes = selectionBoxesBehavior?.selectionBoxes;
+
+        entity.World.Logger.Notification(
+            "[TowablesLib] Towable {0} on {1}. selectionboxes={2}, count={3}, interactionPoint={4}, interactionIndex={5}, towPoint={6}, towIndex={7}",
+            phase,
+            entity.Code,
+            selectionBoxesBehavior != null,
+            selectionBoxes?.Length ?? 0,
+            InteractionPoint,
+            interactionPointSelectionBoxIndex,
+            TowPoint,
+            towPointSelectionBoxIndex
+        );
+
+        if (selectionBoxes == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < selectionBoxes.Length; i++)
+        {
+            entity.World.Logger.Notification(
+                "[TowablesLib] Towable selection box {0} on {1}: {2}",
+                i,
+                entity.Code,
+                selectionBoxes[i].AttachPoint?.Code ?? "<null>"
+            );
         }
     }
 }

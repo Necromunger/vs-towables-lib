@@ -1,0 +1,33 @@
+[
+  {
+    "op": "add",
+    "path": "/behaviorConfigs/hitchable",
+    "value": {
+      "hitchPoint": "RearAP",
+      "distance": 2.5,
+      "minDistance": 1.8,
+      "maxDistance": 3.2
+    },
+    "file": "game:entities/animal/mammal/hooved/elk-tamed"
+  },
+  {
+    "op": "addmerge",
+    "path": "/server/behaviors",
+    "value": [
+      {
+        "code": "hitchable"
+      }
+    ],
+    "file": "game:entities/animal/mammal/hooved/elk-tamed"
+  },
+  {
+    "op": "addmerge",
+    "path": "/client/behaviors",
+    "value": [
+      {
+        "code": "hitchable"
+      }
+    ],
+    "file": "game:entities/animal/mammal/hooved/elk-tamed"
+  }
+]

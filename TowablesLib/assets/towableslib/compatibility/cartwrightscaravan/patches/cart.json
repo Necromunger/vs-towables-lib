@@ -1,0 +1,33 @@
+[
+  {
+    "op": "add",
+    "path": "/behaviorConfigs/towable",
+    "value": {
+      "interactionPoint": "MainGripAP",
+      "towPoint": "MainGripAP",
+      "searchRange": 4,
+      "followStrength": 8
+    },
+    "file": "cartwrightscaravan:entities/nonliving/cart"
+  },
+  {
+    "op": "addmerge",
+    "path": "/server/behaviors",
+    "value": [
+      {
+        "code": "towable"
+      }
+    ],
+    "file": "cartwrightscaravan:entities/nonliving/cart"
+  },
+  {
+    "op": "addmerge",
+    "path": "/client/behaviors",
+    "value": [
+      {
+        "code": "towable"
+      }
+    ],
+    "file": "cartwrightscaravan:entities/nonliving/cart"
+  }
+]

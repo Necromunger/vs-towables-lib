@@ -1,0 +1,41 @@
+[
+  {
+    "op": "add",
+    "path": "/behaviorConfigs/selectionboxes/selectionBoxesByType/*open*/-",
+    "value": "TowAP",
+    "file": "cartwrightscaravan:entities/nonliving/marketstall"
+  },
+  {
+    "op": "add",
+    "path": "/behaviorConfigs/selectionboxes/selectionBoxesByType/*/-",
+    "value": "TowAP",
+    "file": "cartwrightscaravan:entities/nonliving/marketstall"
+  },
+  {
+    "op": "add",
+    "path": "/behaviorConfigs/towable",
+    "value": {
+      "interactionPoint": "TowAP",
+      "towPoint": "TowAP",
+      "searchRange": 4,
+      "followStrength": 8
+    },
+    "file": "cartwrightscaravan:entities/nonliving/marketstall"
+  },
+  {
+    "op": "addmerge",
+    "path": "/server/behaviors",
+    "value": [
+      { "code": "towable" }
+    ],
+    "file": "cartwrightscaravan:entities/nonliving/marketstall"
+  },
+  {
+    "op": "addmerge",
+    "path": "/client/behaviors",
+    "value": [
+      { "code": "towable" }
+    ],
+    "file": "cartwrightscaravan:entities/nonliving/marketstall"
+  }
+]

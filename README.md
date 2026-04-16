@@ -112,3 +112,12 @@ server: {
 The player interacts with the towable's `interactionPoint`. The towable scans nearby entities for a valid `hitchable`, stores that entity as its hitch target, then keeps its own `towPoint` aligned with the hitchable entity's `hitchPoint`.
 
 The hitchable owns the distance band because the pulling entity knows its own body size and working clearance. A goat, elk, polar bear, wagon, or tractor can each define different `minDistance`, `distance`, and `maxDistance` values for the same towable.
+
+## Compatibility Targets
+
+TowablesLib contains compatibility patches for the following mods:
+
+| Mod | Mod ID | Version | Status |
+| --- | --- | --- | --- |
+| Ancient Tools | `ancienttools` | `1.6.1` | Planned |
+| Cartwrights Caravan | `cartwrightscaravan` | `1.8.0` | Planned |
