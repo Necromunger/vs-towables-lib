@@ -35,6 +35,8 @@ behaviorConfigs: {
     interactionPoint: "TowAP",
     towPoint: "TowAP",
     searchRange: 4,
+    followSpeed: 0.08,
+    maxHitchDistance: 20,
     followStrength: 8
   },
   selectionboxes: {
@@ -43,7 +45,11 @@ behaviorConfigs: {
 }
 ```
 
-`followStrength` is optional. Higher values make the towable correct toward its target position more quickly; lower values feel looser. Most entities can omit it.
+`followSpeed` is optional. For towables that are `EntityAgent`s, this is the movement speed passed through entity controls so controlled physics can handle ground movement and stepping.
+
+`maxHitchDistance` is optional. If the towable gets this far from the hitchable, the hitch is cleared.
+
+`followStrength` is optional. It is used as the correction rate for non-agent towables that have to fall back to direct motion.
 
 ## Shape Attachment Points
 

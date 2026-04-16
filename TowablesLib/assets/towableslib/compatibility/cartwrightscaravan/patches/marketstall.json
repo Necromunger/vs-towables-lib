@@ -18,6 +18,8 @@
       "interactionPoint": "TowAP",
       "towPoint": "TowAP",
       "searchRange": 4,
+      "followSpeed": 0.12,
+      "maxHitchDistance": 20,
       "followStrength": 8
     },
     "file": "cartwrightscaravan:entities/nonliving/marketstall"
