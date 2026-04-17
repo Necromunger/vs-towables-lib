@@ -26,7 +26,10 @@
       "targetTowDistance": 2,
       "towDistanceDeadZone": 0.2,
       "tensionCurve": 0.5,
-      "maxJointWalkVector": 0.22
+      "pullFullStrengthDistance": 2,
+      "maxJointWalkVector": 0.32,
+      "hitchVelocityInheritance": 1,
+      "walkVectorSmoothing": 0.35
     },
     "file": "cartwrightscaravan:entities/nonliving/marketstall"
   },

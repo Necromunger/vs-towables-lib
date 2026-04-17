@@ -80,9 +80,24 @@ public class EntityBehaviorTowable : EntityBehavior
     public float TensionCurve { get; private set; } = 0.3f;
 
     /// <summary>
+    /// Forward distance error where pull reaches full strength.
+    /// </summary>
+    public float PullFullStrengthDistance { get; private set; } = 3f;
+
+    /// <summary>
     /// Maximum horizontal walk vector length sent to Vintage Story movement.
     /// </summary>
     public float MaxJointWalkVector { get; private set; } = 0.08f;
+
+    /// <summary>
+    /// How much of the hitch point's actual per-tick movement the towable inherits before pull correction is added.
+    /// </summary>
+    public float HitchVelocityInheritance { get; private set; } = 1f;
+
+    /// <summary>
+    /// Fraction of the new walk vector applied each tick. Lower values smooth pulsing.
+    /// </summary>
+    public float WalkVectorSmoothing { get; private set; } = 0.35f;
 
     public EntityBehaviorTowable(Entity entity) : base(entity) { }
 
@@ -93,6 +108,8 @@ public class EntityBehaviorTowable : EntityBehavior
     private int towPointSelectionBoxIndex = -1;
     private bool selectionBoxIndexesReady;
     private bool loggedSelectionBoxPending;
+    private Vec3d lastHitchPoint;
+    private readonly Vec3d smoothedWalkVector = new Vec3d();
 
     public override void Initialize(EntityProperties properties, JsonObject attributes)
     {
@@ -121,7 +138,10 @@ public class EntityBehaviorTowable : EntityBehavior
         TargetTowDistance = Math.Max(0f, attributes?["targetTowDistance"].AsFloat(TargetTowDistance) ?? TargetTowDistance);
         TowDistanceDeadZone = Math.Max(0f, attributes?["towDistanceDeadZone"].AsFloat(TowDistanceDeadZone) ?? TowDistanceDeadZone);
         TensionCurve = Math.Max(0.001f, attributes?["tensionCurve"].AsFloat(TensionCurve) ?? TensionCurve);
+        PullFullStrengthDistance = Math.Max(0.001f, attributes?["pullFullStrengthDistance"].AsFloat(PullFullStrengthDistance) ?? PullFullStrengthDistance);
         MaxJointWalkVector = Math.Max(0f, attributes?["maxJointWalkVector"].AsFloat(MaxJointWalkVector) ?? MaxJointWalkVector);
+        HitchVelocityInheritance = Math.Max(0f, attributes?["hitchVelocityInheritance"].AsFloat(HitchVelocityInheritance) ?? HitchVelocityInheritance);
+        WalkVectorSmoothing = GameMath.Clamp(attributes?["walkVectorSmoothing"].AsFloat(WalkVectorSmoothing) ?? WalkVectorSmoothing, 0f, 1f);
     }
 
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
@@ -237,6 +257,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private void SetHitch(long entityId)
     {
+        lastHitchPoint = null;
         entity.WatchedAttributes.SetLong(HitchEntityIdAttribute, entityId);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
         MarkChunkModified();
@@ -248,6 +269,7 @@ public class EntityBehaviorTowable : EntityBehavior
         entity.WatchedAttributes.RemoveAttribute(HitchEntityIdAttribute);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
         MarkChunkModified();
+        lastHitchPoint = null;
     }
 
     private void ApplyJointConstraint(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
@@ -255,6 +277,7 @@ public class EntityBehaviorTowable : EntityBehavior
         Vec3d towPoint = GetTowPointPosition();
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
         Vec3d correction = hitchPoint.SubCopy(towPoint);
+        Vec3d inheritedHitchMovement = GetInheritedHitchMovement(hitchPoint);
 
         double towDistance = Math.Sqrt(correction.X * correction.X + correction.Z * correction.Z);
         if (towDistance > MaxTowDistance)
@@ -269,17 +292,29 @@ public class EntityBehaviorTowable : EntityBehavior
 
         double distanceError = towDistance - TargetTowDistance;
         double activeError = Math.Abs(distanceError) - TowDistanceDeadZone;
+        Vec3d directionToHitch = towDistance > 0.001
+            ? new Vec3d(correction.X / towDistance, 0, correction.Z / towDistance)
+            : new Vec3d();
+        Vec3d inheritedPullMovement = GetInheritedPullMovement(inheritedHitchMovement, directionToHitch);
+
         if (activeError <= 0 || towDistance <= 0.001)
         {
-            StopTowableMovement();
+            if (distanceError >= 0 && inheritedPullMovement.LengthSq() > 0.000001)
+            {
+                SetTowableWalkVector(inheritedPullMovement);
+                entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+            }
+            else
+            {
+                SetTowableWalkVector(new Vec3d());
+            }
             return;
         }
 
-        Vec3d directionToHitch = new Vec3d(correction.X / towDistance, 0, correction.Z / towDistance);
         bool isCompressed = distanceError < 0;
         double responseRange = isCompressed
             ? Math.Max(TargetTowDistance - TowDistanceDeadZone, 0.001)
-            : Math.Max(MaxTowDistance - TargetTowDistance, 0.001);
+            : PullFullStrengthDistance;
         double normalizedTension = Math.Min(activeError / responseRange, 1.0);
         double response = Math.Pow(normalizedTension, isCompressed ? CompressionCurve : TensionCurve);
         double strength = isCompressed ? CompressionStrength : PullStrength;
@@ -287,13 +322,48 @@ public class EntityBehaviorTowable : EntityBehavior
         moveSpeed = Math.Min(moveSpeed, MaxJointWalkVector);
 
         Vec3d moveDirection = isCompressed ? GetCompressedTowableAxisDirection(directionToHitch) : directionToHitch;
-        towableAgent.ServerControls.WalkVector.Set(
-            moveDirection.X * moveSpeed,
-            0,
-            moveDirection.Z * moveSpeed
-        );
+        Vec3d correctionMove = moveDirection.Clone().Mul(moveSpeed);
+        Vec3d walkVector = isCompressed
+            ? correctionMove
+            : new Vec3d(
+                inheritedPullMovement.X + correctionMove.X,
+                0,
+                inheritedPullMovement.Z + correctionMove.Z
+            );
+
+        SetTowableWalkVector(walkVector);
 
         entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+    }
+
+    private Vec3d GetInheritedHitchMovement(Vec3d hitchPoint)
+    {
+        if (lastHitchPoint == null)
+        {
+            lastHitchPoint = hitchPoint.Clone();
+            return new Vec3d();
+        }
+
+        Vec3d movement = hitchPoint.SubCopy(lastHitchPoint);
+        lastHitchPoint = hitchPoint.Clone();
+        movement.Y = 0;
+        return movement.Mul(HitchVelocityInheritance);
+    }
+
+    private static Vec3d GetInheritedPullMovement(Vec3d inheritedHitchMovement, Vec3d directionToHitch)
+    {
+        if (inheritedHitchMovement.LengthSq() <= 0.000001 || directionToHitch.LengthSq() <= 0.000001)
+        {
+            return new Vec3d();
+        }
+
+        double movementAwayFromTowable = inheritedHitchMovement.Dot(directionToHitch);
+        if (movementAwayFromTowable <= 0)
+        {
+            return new Vec3d();
+        }
+
+        return directionToHitch.Clone().Mul(movementAwayFromTowable);
     }
 
     private Vec3d GetCompressedTowableAxisDirection(Vec3d directionToHitch)
@@ -313,6 +383,29 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         towableAgent.ServerControls.StopAllMovement();
         towableAgent.ServerControls.WalkVector.Set(0, 0, 0);
+        smoothedWalkVector.Set(0, 0, 0);
+    }
+
+    private void SetTowableWalkVector(Vec3d targetWalkVector)
+    {
+        if (WalkVectorSmoothing >= 1)
+        {
+            smoothedWalkVector.Set(targetWalkVector.X, 0, targetWalkVector.Z);
+        }
+        else
+        {
+            smoothedWalkVector.X += (targetWalkVector.X - smoothedWalkVector.X) * WalkVectorSmoothing;
+            smoothedWalkVector.Y = 0;
+            smoothedWalkVector.Z += (targetWalkVector.Z - smoothedWalkVector.Z) * WalkVectorSmoothing;
+        }
+
+        if (smoothedWalkVector.LengthSq() <= 0.000001)
+        {
+            towableAgent.ServerControls.WalkVector.Set(0, 0, 0);
+            return;
+        }
+
+        towableAgent.ServerControls.WalkVector.Set(smoothedWalkVector.X, 0, smoothedWalkVector.Z);
     }
 
     private Vec3d GetHitchPointPosition(Entity hitchEntity, EntityBehaviorHitchable hitchable)

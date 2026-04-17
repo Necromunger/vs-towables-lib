@@ -14,7 +14,10 @@
       "targetTowDistance": 2,
       "towDistanceDeadZone": 0.2,
       "tensionCurve": 0.5,
-      "maxJointWalkVector": 0.22
+      "pullFullStrengthDistance": 1,
+      "maxJointWalkVector": 0.4,
+      "hitchVelocityInheritance": 0.5,
+      "walkVectorSmoothing": 0.35
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },
