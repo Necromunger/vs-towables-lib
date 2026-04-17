@@ -30,9 +30,10 @@ behaviorConfigs: {
     towPoint: "TowAP",
     hitchSearchRange: 4,
     pullStrength: 30,
+    compressionStrength: 30,
     maxTowDistance: 20,
-    minPullDistance: 1,
-    tensionStartDistance: 1,
+    targetTowDistance: 1,
+    towDistanceDeadZone: 0.1,
     tensionCurve: 0.3
   },
   selectionboxes: {
@@ -45,9 +46,10 @@ All numeric towable settings are optional:
 
 - `hitchSearchRange`: how far the towable scans for a nearby `hitchable` when interacted with.
 - `pullStrength`: how strongly tension moves the towable toward the hitchable's effective pull point.
+- `compressionStrength`: how strongly compression moves the towable away when it is too close to the hitchable's effective pull point.
 - `maxTowDistance`: if the towable gets this far from the hitchable, the hitch is cleared.
-- `minPullDistance`: dead zone where the towable stops moving instead of chasing tiny offsets.
-- `tensionStartDistance`: distance where rope tension starts ramping in.
+- `targetTowDistance`: desired distance between the towable's `towPoint` and the hitchable's effective pull point.
+- `towDistanceDeadZone`: range around `targetTowDistance` where the towable stops moving instead of chasing tiny offsets.
 - `tensionCurve`: shape of the tension ramp. Values below `1` ramp faster; values above `1` ramp slower.
 
 ## Shape Attachment Points

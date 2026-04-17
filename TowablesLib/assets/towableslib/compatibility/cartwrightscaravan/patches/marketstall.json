@@ -18,10 +18,11 @@
       "interactionPoint": "TowAP",
       "towPoint": "TowAP",
       "hitchSearchRange": 4,
-      "pullStrength": 6,
+      "pullStrength": 7,
+      "compressionStrength": 7,
       "maxTowDistance": 20,
-      "minPullDistance": 1,
-      "tensionStartDistance": 1,
+      "targetTowDistance": 1,
+      "towDistanceDeadZone": 0.1,
       "tensionCurve": 0.3
     },
     "file": "cartwrightscaravan:entities/nonliving/marketstall"

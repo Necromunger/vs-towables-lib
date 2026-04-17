@@ -27,7 +27,12 @@ public class EntityBehaviorTowable : EntityBehavior
     /// <summary>
     /// Maximum movement strength applied by rope tension. Higher values pull harder.
     /// </summary>
-    public float PullStrength { get; private set; } = 30f;
+    public float PullStrength { get; private set; } = 7f;
+
+    /// <summary>
+    /// Maximum movement strength applied when the towable is too close and should back away from the hitch.
+    /// </summary>
+    public float CompressionStrength { get; private set; } = 7f;
 
     /// <summary>
     /// Maximum allowed horizontal distance between tow point and hitch point before the hitch is cleared.
@@ -45,14 +50,14 @@ public class EntityBehaviorTowable : EntityBehavior
     public bool IsHitched => HitchEntityId > 0;
 
     /// <summary>
-    /// Distance below which the towable stops moving to avoid jitter from tiny corrections.
+    /// Desired horizontal distance between the tow point and hitch point.
     /// </summary>
-    public float MinPullDistance { get; private set; } = 1.0f;
+    public float TargetTowDistance { get; private set; } = 1.0f;
 
     /// <summary>
-    /// Distance where rope tension begins ramping in.
+    /// Distance around the target tow distance where the towable stops to avoid jitter.
     /// </summary>
-    public float TensionStartDistance { get; private set; } = 1.0f;
+    public float TowDistanceDeadZone { get; private set; } = 0.1f;
 
     /// <summary>
     /// Exponent applied to normalized tension. Values below 1 ramp faster; values above 1 ramp slower.
@@ -66,7 +71,8 @@ public class EntityBehaviorTowable : EntityBehavior
     private bool disabled;
     private int interactionPointSelectionBoxIndex = -1;
     private int towPointSelectionBoxIndex = -1;
-    private bool loggedFirstTickSelectionBoxState;
+    private bool selectionBoxIndexesReady;
+    private bool loggedSelectionBoxPending;
 
     public override void Initialize(EntityProperties properties, JsonObject attributes)
     {
@@ -87,9 +93,10 @@ public class EntityBehaviorTowable : EntityBehavior
         TowPoint = attributes?["towPoint"].AsString(TowPoint) ?? TowPoint;
         HitchSearchRange = attributes?["hitchSearchRange"].AsFloat(HitchSearchRange) ?? HitchSearchRange;
         PullStrength = attributes?["pullStrength"].AsFloat(PullStrength) ?? PullStrength;
+        CompressionStrength = attributes?["compressionStrength"].AsFloat(CompressionStrength) ?? CompressionStrength;
         MaxTowDistance = attributes?["maxTowDistance"].AsFloat(MaxTowDistance) ?? MaxTowDistance;
-        MinPullDistance = attributes?["minPullDistance"].AsFloat(MinPullDistance) ?? MinPullDistance;
-        TensionStartDistance = attributes?["tensionStartDistance"].AsFloat(TensionStartDistance) ?? TensionStartDistance;
+        TargetTowDistance = attributes?["targetTowDistance"].AsFloat(TargetTowDistance) ?? TargetTowDistance;
+        TowDistanceDeadZone = attributes?["towDistanceDeadZone"].AsFloat(TowDistanceDeadZone) ?? TowDistanceDeadZone;
         TensionCurve = attributes?["tensionCurve"].AsFloat(TensionCurve) ?? TensionCurve;
     }
 
@@ -102,7 +109,8 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         // fail - not interact mode or not server side
-        if (mode != EnumInteractMode.Interact || entity.World.Side != EnumAppSide.Server) {
+        if (mode != EnumInteractMode.Interact || entity.World.Side != EnumAppSide.Server)
+        {
             base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
         }
@@ -162,16 +170,7 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        // Client and server both setup here
-        // OnInit OnSpawned and all the rest had no selection box info, need to find real onload point with selection box info available to cache the indexes
-        if (!loggedFirstTickSelectionBoxState)
-        {
-            loggedFirstTickSelectionBoxState = true;
-            RefreshSelectionBoxesIfNeeded();
-            interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
-            towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
-            LogSelectionBoxState("first tick");
-        }
+        ResolveSelectionBoxIndexesIfNeeded();
 
         if (entity.World.Side != EnumAppSide.Server || !IsHitched)
         {
@@ -244,19 +243,49 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        if (towDistance < MinPullDistance) { StopTowableMovement(); return; }
+        double distanceError = towDistance - TargetTowDistance;
+        double activeError = Math.Abs(distanceError) - TowDistanceDeadZone;
+        if (activeError <= 0)
+        {
+            StopTowableMovement();
+            return;
+        }
 
-        double slack = Math.Max(towDistance - TensionStartDistance, 0);
-        double tensionRange = Math.Max(MaxTowDistance - TensionStartDistance, 0.001);
-        double normalizedTension = Math.Min(slack / tensionRange, 1.0);
-        double pullSpeed = Math.Pow(normalizedTension, TensionCurve) * PullStrength * deltaTime;
-        
         Vec3d dir = new Vec3d(correction.X, 0, correction.Z);
-        dir.Normalize();
+        if (dir.LengthSq() <= 0.000001)
+        {
+            dir.Set(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
+        }
+        else
+        {
+            dir.Normalize();
+        }
 
-        towableAgent.ServerControls.WalkVector.Set(dir.X * pullSpeed, 0, dir.Z * pullSpeed);
+        double tensionRange = Math.Max(MaxTowDistance - TargetTowDistance, 0.001);
+        double normalizedTension = Math.Min(activeError / tensionRange, 1.0);
+        bool isCompressed = distanceError < 0;
+        double strength = isCompressed ? CompressionStrength : PullStrength;
+        double moveSpeed = Math.Pow(normalizedTension, TensionCurve) * strength * deltaTime;
+        Vec3d moveDirection = isCompressed ? GetCompressedTowableAxisDirection(dir) : dir;
 
-        entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+        towableAgent.ServerControls.WalkVector.Set(
+            moveDirection.X * moveSpeed,
+            0,
+            moveDirection.Z * moveSpeed
+        );
+
+        if (!isCompressed)
+        {
+            entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+        }
+    }
+
+    private Vec3d GetCompressedTowableAxisDirection(Vec3d directionToHitch)
+    {
+        Vec3d towableForward = new Vec3d(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
+        double forwardPressure = directionToHitch.Dot(towableForward);
+        double directionMultiplier = forwardPressure >= 0 ? -1 : 1;
+        return towableForward.Mul(directionMultiplier);
     }
 
     private void StopTowableMovement()
@@ -309,6 +338,30 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         selectionBoxesBehavior.UpdateColSelBoxes();
+    }
+
+    private void ResolveSelectionBoxIndexesIfNeeded()
+    {
+        if (selectionBoxIndexesReady) return;
+
+        // Selectionboxes can be generated after entity behavior initialization,
+        // so resolve their indexes lazily once the selectionboxes behavior has populated them.
+        RefreshSelectionBoxesIfNeeded();
+        interactionPointSelectionBoxIndex = FindSelectionBoxIndex(entity, InteractionPoint);
+        towPointSelectionBoxIndex = FindSelectionBoxIndex(entity, TowPoint);
+        selectionBoxIndexesReady = interactionPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex >= 0;
+
+        if (selectionBoxIndexesReady)
+        {
+            LogSelectionBoxState("selection boxes ready");
+            return;
+        }
+
+        if (!loggedSelectionBoxPending)
+        {
+            loggedSelectionBoxPending = true;
+            LogSelectionBoxState("selection boxes pending");
+        }
     }
 
     private void LogSelectionBoxState(string phase)
