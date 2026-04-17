@@ -20,6 +20,8 @@
       "hitchSearchRange": 4,
       "pullStrength": 7,
       "compressionStrength": 7,
+      "compressionTurnStrength": 1.5,
+      "compressionCurve": 1.5,
       "maxTowDistance": 20,
       "targetTowDistance": 1,
       "towDistanceDeadZone": 0.1,

@@ -31,6 +31,8 @@ behaviorConfigs: {
     hitchSearchRange: 4,
     pullStrength: 30,
     compressionStrength: 30,
+    compressionTurnStrength: 1.5,
+    compressionCurve: 1.5,
     maxTowDistance: 20,
     targetTowDistance: 1,
     towDistanceDeadZone: 0.1,
@@ -47,6 +49,8 @@ All numeric towable settings are optional:
 - `hitchSearchRange`: how far the towable scans for a nearby `hitchable` when interacted with.
 - `pullStrength`: how strongly tension moves the towable toward the hitchable's effective pull point.
 - `compressionStrength`: how strongly compression moves the towable away when it is too close to the hitchable's effective pull point.
+- `compressionTurnStrength`: how quickly hinge side-pressure steers the towable while compressed. Use a negative value to invert the steering direction.
+- `compressionCurve`: shape of the compression ramp. Values above `1` soften the start of reverse pressure.
 - `maxTowDistance`: if the towable gets this far from the hitchable, the hitch is cleared.
 - `targetTowDistance`: desired distance between the towable's `towPoint` and the hitchable's effective pull point.
 - `towDistanceDeadZone`: range around `targetTowDistance` where the towable stops moving instead of chasing tiny offsets.

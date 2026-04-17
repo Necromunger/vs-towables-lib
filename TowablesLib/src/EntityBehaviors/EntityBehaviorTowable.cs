@@ -35,6 +35,16 @@ public class EntityBehaviorTowable : EntityBehavior
     public float CompressionStrength { get; private set; } = 7f;
 
     /// <summary>
+    /// Yaw turn speed applied while compressed, based on hinge offset from the towable's forward axis.
+    /// </summary>
+    public float CompressionTurnStrength { get; private set; } = 1.5f;
+
+    /// <summary>
+    /// Exponent applied to normalized compression. Values above 1 soften the start of reverse pressure.
+    /// </summary>
+    public float CompressionCurve { get; private set; } = 1.5f;
+
+    /// <summary>
     /// Maximum allowed horizontal distance between tow point and hitch point before the hitch is cleared.
     /// </summary>
     public float MaxTowDistance { get; private set; } = 20f;
@@ -94,6 +104,8 @@ public class EntityBehaviorTowable : EntityBehavior
         HitchSearchRange = attributes?["hitchSearchRange"].AsFloat(HitchSearchRange) ?? HitchSearchRange;
         PullStrength = attributes?["pullStrength"].AsFloat(PullStrength) ?? PullStrength;
         CompressionStrength = attributes?["compressionStrength"].AsFloat(CompressionStrength) ?? CompressionStrength;
+        CompressionTurnStrength = attributes?["compressionTurnStrength"].AsFloat(CompressionTurnStrength) ?? CompressionTurnStrength;
+        CompressionCurve = attributes?["compressionCurve"].AsFloat(CompressionCurve) ?? CompressionCurve;
         MaxTowDistance = attributes?["maxTowDistance"].AsFloat(MaxTowDistance) ?? MaxTowDistance;
         TargetTowDistance = attributes?["targetTowDistance"].AsFloat(TargetTowDistance) ?? TargetTowDistance;
         TowDistanceDeadZone = attributes?["towDistanceDeadZone"].AsFloat(TowDistanceDeadZone) ?? TowDistanceDeadZone;
@@ -261,11 +273,19 @@ public class EntityBehaviorTowable : EntityBehavior
             dir.Normalize();
         }
 
-        double tensionRange = Math.Max(MaxTowDistance - TargetTowDistance, 0.001);
-        double normalizedTension = Math.Min(activeError / tensionRange, 1.0);
         bool isCompressed = distanceError < 0;
+        double tensionRange = isCompressed
+            ? Math.Max(TargetTowDistance - TowDistanceDeadZone, 0.001)
+            : Math.Max(MaxTowDistance - TargetTowDistance, 0.001);
+        double normalizedTension = Math.Min(activeError / tensionRange, 1.0);
         double strength = isCompressed ? CompressionStrength : PullStrength;
-        double moveSpeed = Math.Pow(normalizedTension, TensionCurve) * strength * deltaTime;
+        double response = Math.Pow(normalizedTension, isCompressed ? CompressionCurve : TensionCurve);
+        double moveSpeed = response * strength * deltaTime;
+        if (isCompressed)
+        {
+            ApplyCompressionSteering(hitchPoint, towPoint, response, deltaTime);
+        }
+
         Vec3d moveDirection = isCompressed ? GetCompressedTowableAxisDirection(dir) : dir;
 
         towableAgent.ServerControls.WalkVector.Set(
@@ -280,12 +300,31 @@ public class EntityBehaviorTowable : EntityBehavior
         }
     }
 
+    private void ApplyCompressionSteering(Vec3d hitchPoint, Vec3d towPoint, double normalizedTension, float deltaTime)
+    {
+        float hingeYaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
+        float yawDelta = AngleRadDistance(entity.ServerPos.Yaw, hingeYaw);
+        entity.ServerPos.Yaw += yawDelta * CompressionTurnStrength * (float)normalizedTension * deltaTime;
+    }
+
     private Vec3d GetCompressedTowableAxisDirection(Vec3d directionToHitch)
     {
-        Vec3d towableForward = new Vec3d(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
+        Vec3d towableForward = GetTowableForward();
         double forwardPressure = directionToHitch.Dot(towableForward);
         double directionMultiplier = forwardPressure >= 0 ? -1 : 1;
         return towableForward.Mul(directionMultiplier);
+    }
+
+    private Vec3d GetTowableForward()
+    {
+        return new Vec3d(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
+    }
+
+    private static float AngleRadDistance(float from, float to)
+    {
+        while (to - from > Math.PI) to -= GameMath.TWOPI;
+        while (to - from < -Math.PI) to += GameMath.TWOPI;
+        return to - from;
     }
 
     private void StopTowableMovement()
