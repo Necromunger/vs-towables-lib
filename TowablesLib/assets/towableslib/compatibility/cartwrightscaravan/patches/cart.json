@@ -4,14 +4,21 @@
     "path": "/behaviorConfigs/towable",
     "value": {
       "interactionPoint": "MainGripAP",
+      "towPoint": "MainGripAP",
       "hitchSearchRange": 4,
       "maxTowDistance": 20,
       "followDistance": 0,
-      "followMoveSpeed": 0.1,
+      "followMoveSpeed": 0.2,
       "repathDistanceThreshold": 1,
       "repathIntervalMs": 500,
       "pathSearchDepth": 1000,
-      "pathDistanceTolerance": 1
+      "pathDistanceTolerance": 1,
+      "pushDistance": 1.0,
+      "pushDeadZone": 0.1,
+      "pushStrength": 7,
+      "pushCurve": 1.5,
+      "pushTurnStrength": 1.5,
+      "pushMaxWalkVector": 0.08
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },
