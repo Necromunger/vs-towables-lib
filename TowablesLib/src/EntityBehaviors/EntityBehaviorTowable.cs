@@ -9,21 +9,61 @@ namespace TowablesLib.EntityBehaviors;
 
 public class EntityBehaviorTowable : EntityBehavior
 {
+    /// <summary>
+    /// Selection box attachment point the player must interact with to hitch or unhitch this towable.
+    /// </summary>
     public string InteractionPoint { get; private set; } = "TowAP";
+
+    /// <summary>
+    /// Attachment point on this towable used as the rope/tension anchor.
+    /// </summary>
     public string TowPoint { get; private set; } = "TowAP";
-    public float SearchRange { get; private set; } = 4f;
-    public float LatchSpeed { get; private set; } = 30f;
-    public float MaxHitchDistance { get; private set; } = 20f;
+
+    /// <summary>
+    /// Radius searched for nearby hitchable entities when the player interacts with the towable.
+    /// </summary>
+    public float HitchSearchRange { get; private set; } = 4f;
+
+    /// <summary>
+    /// Maximum movement strength applied by rope tension. Higher values pull harder.
+    /// </summary>
+    public float PullStrength { get; private set; } = 30f;
+
+    /// <summary>
+    /// Maximum allowed horizontal distance between tow point and hitch point before the hitch is cleared.
+    /// </summary>
+    public float MaxTowDistance { get; private set; } = 20f;
+
+    /// <summary>
+    /// Entity id of the current hitch target, or 0 when not hitched.
+    /// </summary>
     public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
+
+    /// <summary>
+    /// True when this towable currently has a stored hitch target.
+    /// </summary>
     public bool IsHitched => HitchEntityId > 0;
 
-    public float MinFollowDistance { get; private set; } = 1.0f;  // dead zone
-    public float RopeSlackOrigin { get; private set; } = 1.0f;    // where tension starts
-    public float AccelerationCurve { get; private set; } = 0.3f;  // <1 fast ramp, >1 slow ramp
+    /// <summary>
+    /// Distance below which the towable stops moving to avoid jitter from tiny corrections.
+    /// </summary>
+    public float MinPullDistance { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// Distance where rope tension begins ramping in.
+    /// </summary>
+    public float TensionStartDistance { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// Exponent applied to normalized tension. Values below 1 ramp faster; values above 1 ramp slower.
+    /// </summary>
+    public float TensionCurve { get; private set; } = 0.3f;
 
     public EntityBehaviorTowable(Entity entity) : base(entity) { }
 
     private const string HitchEntityIdAttribute = "towableslib:hitchEntityId";
+    private EntityAgent towableAgent = null!;
+    private bool disabled;
     private int interactionPointSelectionBoxIndex = -1;
     private int towPointSelectionBoxIndex = -1;
     private bool loggedFirstTickSelectionBoxState;
@@ -32,15 +72,35 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         base.Initialize(properties, attributes);
 
+        towableAgent = entity as EntityAgent;
+        if (towableAgent == null)
+        {
+            disabled = true;
+            entity.World.Logger.Error(
+                "[TowablesLib] Towable behavior on {0} requires EntityAgent. Behavior disabled.",
+                entity.Code
+            );
+            return;
+        }
+
         InteractionPoint = attributes?["interactionPoint"].AsString(InteractionPoint) ?? InteractionPoint;
         TowPoint = attributes?["towPoint"].AsString(TowPoint) ?? TowPoint;
-        SearchRange = attributes?["searchRange"].AsFloat(SearchRange) ?? SearchRange;
-        LatchSpeed = attributes?["latchSpeed"].AsFloat(LatchSpeed) ?? LatchSpeed;
-        MaxHitchDistance = attributes?["maxHitchDistance"].AsFloat(MaxHitchDistance) ?? MaxHitchDistance;
+        HitchSearchRange = attributes?["hitchSearchRange"].AsFloat(HitchSearchRange) ?? HitchSearchRange;
+        PullStrength = attributes?["pullStrength"].AsFloat(PullStrength) ?? PullStrength;
+        MaxTowDistance = attributes?["maxTowDistance"].AsFloat(MaxTowDistance) ?? MaxTowDistance;
+        MinPullDistance = attributes?["minPullDistance"].AsFloat(MinPullDistance) ?? MinPullDistance;
+        TensionStartDistance = attributes?["tensionStartDistance"].AsFloat(TensionStartDistance) ?? TensionStartDistance;
+        TensionCurve = attributes?["tensionCurve"].AsFloat(TensionCurve) ?? TensionCurve;
     }
 
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
     {
+        if (disabled)
+        {
+            base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
+            return;
+        }
+
         // fail - not interact mode or not server side
         if (mode != EnumInteractMode.Interact || entity.World.Side != EnumAppSide.Server) {
             base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
@@ -97,6 +157,11 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         base.OnGameTick(deltaTime);
 
+        if (disabled)
+        {
+            return;
+        }
+
         // Client and server both setup here
         // OnInit OnSpawned and all the rest had no selection box info, need to find real onload point with selection box info available to cache the indexes
         if (!loggedFirstTickSelectionBoxState)
@@ -121,7 +186,7 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        FollowHitch(hitchEntity, hitchable, deltaTime);
+        ApplyTowTension(hitchEntity, hitchable, deltaTime);
     }
 
     public override string PropertyName() => "towable";
@@ -141,8 +206,8 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         return entity.World.GetNearestEntity(
             entity.ServerPos.XYZ,
-            SearchRange,
-            SearchRange,
+            HitchSearchRange,
+            HitchSearchRange,
             candidate => candidate != entity && candidate.GetBehavior<EntityBehaviorHitchable>() != null
         );
     }
@@ -162,66 +227,42 @@ public class EntityBehaviorTowable : EntityBehavior
         MarkChunkModified();
     }
 
-    private void FollowHitch(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
+    private void ApplyTowTension(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
     {
-        Vec3d towPoint = GetTowPointPosition(); // was GetEntityOriginPosition(entity)
+        Vec3d towPoint = GetTowPointPosition();
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
         Vec3d correction = hitchPoint.SubCopy(towPoint);
 
-        double currentDistance = Math.Sqrt(correction.X * correction.X + correction.Z * correction.Z);
-        if (currentDistance > MaxHitchDistance)
+        double towDistance = Math.Sqrt(correction.X * correction.X + correction.Z * correction.Z);
+        if (towDistance > MaxTowDistance)
         {
             entity.World.Logger.Notification(
-                "[TowablesLib] Clearing hitch on {0}; distance {1:0.##} exceeded maxHitchDistance {2:0.##}",
-                entity.Code, currentDistance, MaxHitchDistance
+                "[TowablesLib] Clearing hitch on {0}; distance {1:0.##} exceeded maxTowDistance {2:0.##}",
+                entity.Code, towDistance, MaxTowDistance
             );
             ClearHitch();
             return;
         }
 
-        if (currentDistance < MinFollowDistance) { StopTowableMovement(); return; }
+        if (towDistance < MinPullDistance) { StopTowableMovement(); return; }
 
-        double slack = currentDistance - RopeSlackOrigin;
-        double normalised = Math.Min(slack / (MaxHitchDistance - RopeSlackOrigin), 1.0);
-        double speed = Math.Pow(normalised, AccelerationCurve) * LatchSpeed * deltaTime;
+        double slack = Math.Max(towDistance - TensionStartDistance, 0);
+        double tensionRange = Math.Max(MaxTowDistance - TensionStartDistance, 0.001);
+        double normalizedTension = Math.Min(slack / tensionRange, 1.0);
+        double pullSpeed = Math.Pow(normalizedTension, TensionCurve) * PullStrength * deltaTime;
         
         Vec3d dir = new Vec3d(correction.X, 0, correction.Z);
         dir.Normalize();
 
-        if (entity is EntityAgent agent) //TODO: add requirement for EntityAgent from the start in hitch
-        {
-            agent.ServerControls.WalkVector.Set(dir.X * speed, 0, dir.Z * speed);
-        }
+        towableAgent.ServerControls.WalkVector.Set(dir.X * pullSpeed, 0, dir.Z * pullSpeed);
 
         entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
     }
 
     private void StopTowableMovement()
     {
-        if (entity is EntityAgent agent)
-        {
-            agent.ServerControls.StopAllMovement();
-            agent.ServerControls.WalkVector.Set(0, 0, 0);
-        }
-    }
-
-    private Vec3d GetTowPointPosition()
-    {
-        var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
-        if (selectionBoxes != null && towPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex < selectionBoxes.Length)
-        {
-            var ap = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
-            Vec3d offset = new Vec3d(ap.PosX / 16.0, ap.PosY / 16.0, ap.PosZ / 16.0);
-            return GetOffsetPosition(entity, offset);
-        }
-        return entity.ServerPos.XYZ;
-    }
-
-    private static void StopEntityControls(EntityAgent agent)
-    {
-        agent.ServerControls.StopAllMovement();
-        agent.ServerControls.WalkVector.Set(0, 0, 0);
-        agent.ServerControls.FlyVector.Set(0, 0, 0);
+        towableAgent.ServerControls.StopAllMovement();
+        towableAgent.ServerControls.WalkVector.Set(0, 0, 0);
     }
 
     private Vec3d GetHitchPointPosition(Entity hitchEntity, EntityBehaviorHitchable hitchable)
@@ -250,8 +291,6 @@ public class EntityBehaviorTowable : EntityBehavior
 
         return -1;
     }
-
-    private static Vec3d GetEntityOriginPosition(Entity pointEntity) => pointEntity.ServerPos.XYZ;
 
     private void MarkChunkModified()
     {
@@ -303,5 +342,18 @@ public class EntityBehaviorTowable : EntityBehavior
                 selectionBoxes[i].AttachPoint?.Code ?? "<null>"
             );
         }
+    }
+
+    private Vec3d GetTowPointPosition()
+    {
+        var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
+        if (selectionBoxes != null && towPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex < selectionBoxes.Length)
+        {
+            var ap = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
+            Vec3d offset = new Vec3d(ap.PosX / 16.0, ap.PosY / 16.0, ap.PosZ / 16.0);
+            return GetOffsetPosition(entity, offset);
+        }
+
+        return entity.ServerPos.XYZ;
     }
 }

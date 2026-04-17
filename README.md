@@ -21,16 +21,19 @@ behaviorConfigs: {
 
 ### towable
 
-Belongs on the entity that can be pulled.
+Belongs on the entity that can be pulled. The entity must be an `EntityAgent`; if not, the behavior logs an error and disables itself.
 
 ```json
 behaviorConfigs: {
   towable: {
     interactionPoint: "TowAP",
     towPoint: "TowAP",
-    searchRange: 4,
-    latchSpeed: 30,
-    maxHitchDistance: 20
+    hitchSearchRange: 4,
+    pullStrength: 30,
+    maxTowDistance: 20,
+    minPullDistance: 1,
+    tensionStartDistance: 1,
+    tensionCurve: 0.3
   },
   selectionboxes: {
     selectionBoxes: ["TowAP"]
@@ -38,13 +41,18 @@ behaviorConfigs: {
 }
 ```
 
-`latchSpeed` is optional. It controls how quickly the towable snaps its anchor point toward the hitchable's effective pull point. Higher values behave more like a hard latch.
+All numeric towable settings are optional:
 
-`maxHitchDistance` is optional. If the towable gets this far from the hitchable, the hitch is cleared.
+- `hitchSearchRange`: how far the towable scans for a nearby `hitchable` when interacted with.
+- `pullStrength`: how strongly tension moves the towable toward the hitchable's effective pull point.
+- `maxTowDistance`: if the towable gets this far from the hitchable, the hitch is cleared.
+- `minPullDistance`: dead zone where the towable stops moving instead of chasing tiny offsets.
+- `tensionStartDistance`: distance where rope tension starts ramping in.
+- `tensionCurve`: shape of the tension ramp. Values below `1` ramp faster; values above `1` ramp slower.
 
 ## Shape Attachment Points
 
-`hitchPoint`, `interactionPoint`, and `towPoint` are attachment point codes from the entity shape file.
+`hitchPoint`, `interactionPoint`, and `towPoint` are attachment point codes from the entity shape file. The towable behavior uses `interactionPoint` for player interaction and `towPoint` for its pull anchor; the hitchable behavior uses `hitchOffset` as the current server-side effective pull point.
 
 Vintage Story shape elements can contain an `attachmentpoints` array. The shape element owns the 3D volume, and the attachment point gives that volume a named anchor.
 
@@ -106,9 +114,9 @@ server: {
 
 ## Intended Flow
 
-The player interacts with the towable's `interactionPoint`. The towable scans nearby entities for a valid `hitchable`, stores that entity as its hitch target, then keeps its own `towPoint` aligned with the hitchable entity's `hitchPoint`.
+The player interacts with the towable's `interactionPoint`. The towable scans nearby entities within `hitchSearchRange` for a valid `hitchable`, stores that entity as its hitch target, then applies tension from its own `towPoint` toward the hitchable entity's effective pull point.
 
-The hitchable owns the hitch offset because the pulling entity knows its own body size and working clearance. A goat, elk, polar bear, wagon, or tractor can each define a different effective pull point for the same towable.
+The hitchable owns the `hitchOffset` because the pulling entity knows its own body size and working clearance. A goat, elk, polar bear, wagon, or tractor can each define a different effective pull point for the same towable.
 
 ## Compatibility Targets
 
@@ -116,5 +124,4 @@ TowablesLib contains compatibility patches for the following mods:
 
 | Mod | Mod ID | Version | Status |
 | --- | --- | --- | --- |
-| Ancient Tools | `ancienttools` | `1.6.1` | Planned |
 | Cartwrights Caravan | `cartwrightscaravan` | `1.8.0` | Planned |

@@ -11,9 +11,12 @@
     "value": {
       "interactionPoint": "TowAP",
       "towPoint": "TowAP",
-      "searchRange": 4,
-      "latchSpeed": 15,
-      "maxHitchDistance": 20
+      "hitchSearchRange": 4,
+      "pullStrength": 6,
+      "maxTowDistance": 20,
+      "minPullDistance": 1,
+      "tensionStartDistance": 1,
+      "tensionCurve": 0.3
     },
     "file": "cartwrightscaravan:entities/nonliving/sled"
   },

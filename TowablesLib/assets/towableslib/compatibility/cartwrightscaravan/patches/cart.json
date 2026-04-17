@@ -5,9 +5,12 @@
     "value": {
       "interactionPoint": "MainGripAP",
       "towPoint": "MainGripAP",
-      "searchRange": 4,
-      "latchSpeed": 6,
-      "maxHitchDistance": 20
+      "hitchSearchRange": 4,
+      "pullStrength": 6,
+      "maxTowDistance": 20,
+      "minPullDistance": 1,
+      "tensionStartDistance": 1,
+      "tensionCurve": 0.3
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },
