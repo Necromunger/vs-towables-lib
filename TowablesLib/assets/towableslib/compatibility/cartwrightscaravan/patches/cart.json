@@ -5,15 +5,16 @@
     "value": {
       "interactionPoint": "MainGripAP",
       "towPoint": "MainGripAP",
+      "useEntityCenterAsTowPoint": true,
       "hitchSearchRange": 4,
-      "pullStrength": 30,
+      "pullStrength": 9,
       "compressionStrength": 8,
-      "compressionTurnStrength": 16,
       "compressionCurve": 1.5,
-      "maxTowDistance": 10,
-      "targetTowDistance": 0.5,
-      "towDistanceDeadZone": 0.1,
-      "tensionCurve": 1
+      "maxTowDistance": 20,
+      "targetTowDistance": 2,
+      "towDistanceDeadZone": 0.2,
+      "tensionCurve": 0.5,
+      "maxJointWalkVector": 0.22
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },

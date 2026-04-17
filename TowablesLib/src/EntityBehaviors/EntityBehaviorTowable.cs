@@ -20,29 +20,19 @@ public class EntityBehaviorTowable : EntityBehavior
     public string TowPoint { get; private set; } = "TowAP";
 
     /// <summary>
+    /// Optional local-space offset used as the tow anchor instead of resolving a shape attachment point.
+    /// </summary>
+    public Vec3d TowOffset { get; private set; } = null;
+
+    /// <summary>
+    /// If true, use the entity origin as the physics tow anchor. Useful for unstable third-party attachment points.
+    /// </summary>
+    public bool UseEntityCenterAsTowPoint { get; private set; }
+
+    /// <summary>
     /// Radius searched for nearby hitchable entities when the player interacts with the towable.
     /// </summary>
     public float HitchSearchRange { get; private set; } = 4f;
-
-    /// <summary>
-    /// Maximum movement strength applied by rope tension. Higher values pull harder.
-    /// </summary>
-    public float PullStrength { get; private set; } = 7f;
-
-    /// <summary>
-    /// Maximum movement strength applied when the towable is too close and should back away from the hitch.
-    /// </summary>
-    public float CompressionStrength { get; private set; } = 7f;
-
-    /// <summary>
-    /// Yaw turn speed applied while compressed, based on hinge offset from the towable's forward axis.
-    /// </summary>
-    public float CompressionTurnStrength { get; private set; } = 1.5f;
-
-    /// <summary>
-    /// Exponent applied to normalized compression. Values above 1 soften the start of reverse pressure.
-    /// </summary>
-    public float CompressionCurve { get; private set; } = 1.5f;
 
     /// <summary>
     /// Maximum allowed horizontal distance between tow point and hitch point before the hitch is cleared.
@@ -60,6 +50,21 @@ public class EntityBehaviorTowable : EntityBehavior
     public bool IsHitched => HitchEntityId > 0;
 
     /// <summary>
+    /// Movement strength applied by rope tension. Higher values pull harder.
+    /// </summary>
+    public float PullStrength { get; private set; } = 7f;
+
+    /// <summary>
+    /// Movement strength applied when the towable is too close and should back away from the hitch.
+    /// </summary>
+    public float CompressionStrength { get; private set; } = 7f;
+
+    /// <summary>
+    /// Exponent applied to normalized compression. Values above 1 soften the start of reverse pressure.
+    /// </summary>
+    public float CompressionCurve { get; private set; } = 1.5f;
+
+    /// <summary>
     /// Desired horizontal distance between the tow point and hitch point.
     /// </summary>
     public float TargetTowDistance { get; private set; } = 1.0f;
@@ -73,6 +78,11 @@ public class EntityBehaviorTowable : EntityBehavior
     /// Exponent applied to normalized tension. Values below 1 ramp faster; values above 1 ramp slower.
     /// </summary>
     public float TensionCurve { get; private set; } = 0.3f;
+
+    /// <summary>
+    /// Maximum horizontal walk vector length sent to Vintage Story movement.
+    /// </summary>
+    public float MaxJointWalkVector { get; private set; } = 0.08f;
 
     public EntityBehaviorTowable(Entity entity) : base(entity) { }
 
@@ -101,15 +111,17 @@ public class EntityBehaviorTowable : EntityBehavior
 
         InteractionPoint = attributes?["interactionPoint"].AsString(InteractionPoint) ?? InteractionPoint;
         TowPoint = attributes?["towPoint"].AsString(TowPoint) ?? TowPoint;
+        TowOffset = ReadVec3d(attributes?["towOffset"]);
+        UseEntityCenterAsTowPoint = attributes?["useEntityCenterAsTowPoint"].AsBool(UseEntityCenterAsTowPoint) ?? UseEntityCenterAsTowPoint;
         HitchSearchRange = attributes?["hitchSearchRange"].AsFloat(HitchSearchRange) ?? HitchSearchRange;
-        PullStrength = attributes?["pullStrength"].AsFloat(PullStrength) ?? PullStrength;
-        CompressionStrength = attributes?["compressionStrength"].AsFloat(CompressionStrength) ?? CompressionStrength;
-        CompressionTurnStrength = attributes?["compressionTurnStrength"].AsFloat(CompressionTurnStrength) ?? CompressionTurnStrength;
-        CompressionCurve = attributes?["compressionCurve"].AsFloat(CompressionCurve) ?? CompressionCurve;
         MaxTowDistance = attributes?["maxTowDistance"].AsFloat(MaxTowDistance) ?? MaxTowDistance;
-        TargetTowDistance = attributes?["targetTowDistance"].AsFloat(TargetTowDistance) ?? TargetTowDistance;
-        TowDistanceDeadZone = attributes?["towDistanceDeadZone"].AsFloat(TowDistanceDeadZone) ?? TowDistanceDeadZone;
-        TensionCurve = attributes?["tensionCurve"].AsFloat(TensionCurve) ?? TensionCurve;
+        PullStrength = Math.Max(0f, attributes?["pullStrength"].AsFloat(PullStrength) ?? PullStrength);
+        CompressionStrength = Math.Max(0f, attributes?["compressionStrength"].AsFloat(CompressionStrength) ?? CompressionStrength);
+        CompressionCurve = Math.Max(0.001f, attributes?["compressionCurve"].AsFloat(CompressionCurve) ?? CompressionCurve);
+        TargetTowDistance = Math.Max(0f, attributes?["targetTowDistance"].AsFloat(TargetTowDistance) ?? TargetTowDistance);
+        TowDistanceDeadZone = Math.Max(0f, attributes?["towDistanceDeadZone"].AsFloat(TowDistanceDeadZone) ?? TowDistanceDeadZone);
+        TensionCurve = Math.Max(0.001f, attributes?["tensionCurve"].AsFloat(TensionCurve) ?? TensionCurve);
+        MaxJointWalkVector = Math.Max(0f, attributes?["maxJointWalkVector"].AsFloat(MaxJointWalkVector) ?? MaxJointWalkVector);
     }
 
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
@@ -197,7 +209,7 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
-        ApplyTowTension(hitchEntity, hitchable, deltaTime);
+        ApplyJointConstraint(hitchEntity, hitchable, deltaTime);
     }
 
     public override string PropertyName() => "towable";
@@ -238,7 +250,7 @@ public class EntityBehaviorTowable : EntityBehavior
         MarkChunkModified();
     }
 
-    private void ApplyTowTension(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
+    private void ApplyJointConstraint(Entity hitchEntity, EntityBehaviorHitchable hitchable, float deltaTime)
     {
         Vec3d towPoint = GetTowPointPosition();
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
@@ -257,54 +269,31 @@ public class EntityBehaviorTowable : EntityBehavior
 
         double distanceError = towDistance - TargetTowDistance;
         double activeError = Math.Abs(distanceError) - TowDistanceDeadZone;
-        if (activeError <= 0)
+        if (activeError <= 0 || towDistance <= 0.001)
         {
             StopTowableMovement();
             return;
         }
 
-        Vec3d dir = new Vec3d(correction.X, 0, correction.Z);
-        if (dir.LengthSq() <= 0.000001)
-        {
-            dir.Set(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
-        }
-        else
-        {
-            dir.Normalize();
-        }
-
+        Vec3d directionToHitch = new Vec3d(correction.X / towDistance, 0, correction.Z / towDistance);
         bool isCompressed = distanceError < 0;
-        double tensionRange = isCompressed
+        double responseRange = isCompressed
             ? Math.Max(TargetTowDistance - TowDistanceDeadZone, 0.001)
             : Math.Max(MaxTowDistance - TargetTowDistance, 0.001);
-        double normalizedTension = Math.Min(activeError / tensionRange, 1.0);
-        double strength = isCompressed ? CompressionStrength : PullStrength;
+        double normalizedTension = Math.Min(activeError / responseRange, 1.0);
         double response = Math.Pow(normalizedTension, isCompressed ? CompressionCurve : TensionCurve);
+        double strength = isCompressed ? CompressionStrength : PullStrength;
         double moveSpeed = response * strength * deltaTime;
-        if (isCompressed)
-        {
-            ApplyCompressionSteering(hitchPoint, towPoint, response, deltaTime);
-        }
+        moveSpeed = Math.Min(moveSpeed, MaxJointWalkVector);
 
-        Vec3d moveDirection = isCompressed ? GetCompressedTowableAxisDirection(dir) : dir;
-
+        Vec3d moveDirection = isCompressed ? GetCompressedTowableAxisDirection(directionToHitch) : directionToHitch;
         towableAgent.ServerControls.WalkVector.Set(
             moveDirection.X * moveSpeed,
             0,
             moveDirection.Z * moveSpeed
         );
 
-        if (!isCompressed)
-        {
-            entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
-        }
-    }
-
-    private void ApplyCompressionSteering(Vec3d hitchPoint, Vec3d towPoint, double normalizedTension, float deltaTime)
-    {
-        float hingeYaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
-        float yawDelta = AngleRadDistance(entity.ServerPos.Yaw, hingeYaw);
-        entity.ServerPos.Yaw += yawDelta * CompressionTurnStrength * (float)normalizedTension * deltaTime;
+        entity.ServerPos.Yaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
     }
 
     private Vec3d GetCompressedTowableAxisDirection(Vec3d directionToHitch)
@@ -318,13 +307,6 @@ public class EntityBehaviorTowable : EntityBehavior
     private Vec3d GetTowableForward()
     {
         return new Vec3d(Math.Sin(entity.ServerPos.Yaw), 0, Math.Cos(entity.ServerPos.Yaw));
-    }
-
-    private static float AngleRadDistance(float from, float to)
-    {
-        while (to - from > Math.PI) to -= GameMath.TWOPI;
-        while (to - from < -Math.PI) to += GameMath.TWOPI;
-        return to - from;
     }
 
     private void StopTowableMovement()
@@ -343,6 +325,20 @@ public class EntityBehaviorTowable : EntityBehavior
         return pointEntity.ServerPos.XYZ.AddCopy(localOffset.RotatedCopy(pointEntity.ServerPos.Yaw));
     }
 
+    private static Vec3d ReadVec3d(JsonObject value)
+    {
+        if (value?.Exists != true)
+        {
+            return null;
+        }
+
+        return new Vec3d(
+            value["x"].AsDouble(0),
+            value["y"].AsDouble(0),
+            value["z"].AsDouble(0)
+        );
+    }
+
     private static int FindSelectionBoxIndex(Entity pointEntity, string pointCode)
     {
         var selectionBoxes = pointEntity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
@@ -350,7 +346,7 @@ public class EntityBehaviorTowable : EntityBehavior
         {
             for (int i = 0; i < selectionBoxes.Length; i++)
             {
-                if (selectionBoxes[i].AttachPoint.Code == pointCode)
+                if (selectionBoxes[i].AttachPoint?.Code == pointCode)
                 {
                     return i;
                 }
@@ -438,12 +434,25 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private Vec3d GetTowPointPosition()
     {
+        if (UseEntityCenterAsTowPoint)
+        {
+            return entity.ServerPos.XYZ;
+        }
+
+        if (TowOffset != null)
+        {
+            return GetOffsetPosition(entity, TowOffset);
+        }
+
         var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
         if (selectionBoxes != null && towPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex < selectionBoxes.Length)
         {
-            var ap = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
-            Vec3d offset = new Vec3d(ap.PosX / 16.0, ap.PosY / 16.0, ap.PosZ / 16.0);
-            return GetOffsetPosition(entity, offset);
+            var attachPoint = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
+            if (attachPoint != null)
+            {
+                Vec3d offset = new Vec3d(attachPoint.PosX / 16.0, attachPoint.PosY / 16.0, attachPoint.PosZ / 16.0);
+                return GetOffsetPosition(entity, offset);
+            }
         }
 
         return entity.ServerPos.XYZ;
