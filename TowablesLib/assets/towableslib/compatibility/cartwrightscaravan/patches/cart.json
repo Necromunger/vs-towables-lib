@@ -6,14 +6,14 @@
       "interactionPoint": "MainGripAP",
       "towPoint": "MainGripAP",
       "hitchSearchRange": 4,
-      "pullStrength": 7,
+      "pullStrength": 8,
       "compressionStrength": 7,
       "compressionTurnStrength": 10,
       "compressionCurve": 1.5,
       "maxTowDistance": 20,
       "targetTowDistance": 1,
-      "towDistanceDeadZone": 0.1,
-      "tensionCurve": 0.3
+      "towDistanceDeadZone": 0.2,
+      "tensionCurve": 1
     },
     "file": "cartwrightscaravan:entities/nonliving/cart"
   },
