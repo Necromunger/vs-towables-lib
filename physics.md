@@ -210,12 +210,6 @@ The current path-following tow behavior exposes these useful config keys:
 - `arriveDistance`
   - optional explicit target distance; if omitted or `0`, the towable uses an automatic size-based distance
 
-Compatibility aliases still accepted:
-
-- `targetTowDistance` -> `followDistance`
-- `moveSpeed` -> `followMoveSpeed`
-- `targetDistance` -> `arriveDistance`
-
 ## Caveats About `NavigateTo_Async()`
 
 Using `NavigateTo_Async(targetEntity.ServerPos.XYZ, ...)` directly is promising, but not enough on its own.

@@ -24,6 +24,18 @@ public class EntityBehaviorTowable : EntityBehavior
 
     public float FollowMoveSpeed { get; private set; } = 0.03f;
 
+    public float FollowMoveSpeedNearFactor { get; private set; } = 0.4f;
+
+    public float FollowMoveSpeedFarFactor { get; private set; } = 1.2f;
+
+    public float FollowMoveSpeedRampDistance { get; private set; }
+
+    public float FollowMoveSpeedRampCurve { get; private set; } = 1.5f;
+
+    public float FollowTargetLeadSeconds { get; private set; } = 0.35f;
+
+    public float FollowTargetMaxLeadDistance { get; private set; } = 0.75f;
+
     public float RepathDistanceThreshold { get; private set; } = 1.5f;
 
     public int RepathIntervalMs { get; private set; } = 750;
@@ -59,6 +71,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private int towPointSelectionBoxIndex = -1;
     private bool selectionBoxIndexesResolved;
     private Vec3d lastRequestedTarget;
+    private float lastRequestedMoveSpeed;
     private long nextRepathMs;
     private bool pushActive;
 
@@ -86,6 +99,12 @@ public class EntityBehaviorTowable : EntityBehavior
         MaxTowDistance = Math.Max(0.1f, attributes?["maxTowDistance"].AsFloat(MaxTowDistance) ?? MaxTowDistance);
         FollowDistance = ReadFollowDistance(attributes);
         FollowMoveSpeed = Math.Max(0.001f, ReadMoveSpeed(attributes));
+        FollowMoveSpeedNearFactor = Math.Max(0.05f, attributes?["followMoveSpeedNearFactor"].AsFloat(FollowMoveSpeedNearFactor) ?? FollowMoveSpeedNearFactor);
+        FollowMoveSpeedFarFactor = Math.Max(FollowMoveSpeedNearFactor, attributes?["followMoveSpeedFarFactor"].AsFloat(FollowMoveSpeedFarFactor) ?? FollowMoveSpeedFarFactor);
+        FollowMoveSpeedRampDistance = Math.Max(0f, attributes?["followMoveSpeedRampDistance"].AsFloat(FollowMoveSpeedRampDistance) ?? FollowMoveSpeedRampDistance);
+        FollowMoveSpeedRampCurve = Math.Max(0.001f, attributes?["followMoveSpeedRampCurve"].AsFloat(FollowMoveSpeedRampCurve) ?? FollowMoveSpeedRampCurve);
+        FollowTargetLeadSeconds = Math.Max(0f, attributes?["followTargetLeadSeconds"].AsFloat(FollowTargetLeadSeconds) ?? FollowTargetLeadSeconds);
+        FollowTargetMaxLeadDistance = Math.Max(0f, attributes?["followTargetMaxLeadDistance"].AsFloat(FollowTargetMaxLeadDistance) ?? FollowTargetMaxLeadDistance);
         RepathDistanceThreshold = Math.Max(0.05f, attributes?["repathDistanceThreshold"].AsFloat(RepathDistanceThreshold) ?? RepathDistanceThreshold);
         RepathIntervalMs = Math.Max(0, attributes?["repathIntervalMs"].AsInt(RepathIntervalMs) ?? RepathIntervalMs);
         PathSearchDepth = Math.Max(1, attributes?["pathSearchDepth"].AsInt(PathSearchDepth) ?? PathSearchDepth);
@@ -189,7 +208,8 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         Vec3d followTarget = GetFollowTarget(hitchEntity, hitchPoint);
-        UpdatePathFollowing(followTarget);
+        float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance);
+        UpdatePathFollowing(followTarget, followMoveSpeed);
         towTraverser?.OnGameTick(deltaTime);
     }
 
@@ -285,7 +305,7 @@ public class EntityBehaviorTowable : EntityBehavior
         entity.ServerPos.Yaw += yawDelta * PushTurnStrength * (float)normalizedPush * deltaTime;
     }
 
-    private void UpdatePathFollowing(Vec3d followTarget)
+    private void UpdatePathFollowing(Vec3d followTarget, float moveSpeed)
     {
         if (towTraverser == null)
         {
@@ -306,10 +326,15 @@ public class EntityBehaviorTowable : EntityBehavior
         bool shouldStartPath = !towTraverser.Active
             && followTarget.HorizontalSquareDistanceTo(entity.ServerPos.X, entity.ServerPos.Z) > arriveDistance * arriveDistance;
 
+        bool speedChanged = lastRequestedMoveSpeed > 0f && Math.Abs(lastRequestedMoveSpeed - moveSpeed) > 0.0005f;
+
         bool shouldRepath = towTraverser.Active
             && towTraverser.Ready
-            && lastRequestedTarget != null
-            && lastRequestedTarget.HorizontalSquareDistanceTo(followTarget.X, followTarget.Z) > RepathDistanceThreshold * RepathDistanceThreshold
+            && (
+                speedChanged
+                || (lastRequestedTarget != null
+                    && lastRequestedTarget.HorizontalSquareDistanceTo(followTarget.X, followTarget.Z) > RepathDistanceThreshold * RepathDistanceThreshold)
+            )
             && nowMs >= nextRepathMs;
 
         if (!shouldStartPath && !shouldRepath)
@@ -319,7 +344,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         if (!towTraverser.NavigateTo_Async(
                 followTarget.Clone(),
-                FollowMoveSpeed,
+                moveSpeed,
                 arriveDistance,
                 OnPathGoalReached,
                 OnPathStuck,
@@ -332,6 +357,7 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         lastRequestedTarget = followTarget.Clone();
+        lastRequestedMoveSpeed = moveSpeed;
         nextRepathMs = nowMs + RepathIntervalMs;
     }
 
@@ -340,8 +366,32 @@ public class EntityBehaviorTowable : EntityBehavior
         double yaw = hitchEntity.ServerPos.Yaw;
         double offsetX = Math.Sin(yaw) * FollowDistance;
         double offsetZ = Math.Cos(yaw) * FollowDistance;
+        Vec3d followTarget = hitchPoint.AddCopy(-offsetX, 0, -offsetZ);
 
-        return hitchPoint.AddCopy(-offsetX, 0, -offsetZ);
+        if (FollowTargetLeadSeconds <= 0 || FollowTargetMaxLeadDistance <= 0)
+        {
+            return followTarget;
+        }
+
+        double leadX = hitchEntity.ServerPos.Motion.X * FollowTargetLeadSeconds;
+        double leadZ = hitchEntity.ServerPos.Motion.Z * FollowTargetLeadSeconds;
+        double leadLength = Math.Sqrt(leadX * leadX + leadZ * leadZ);
+        if (leadLength <= 0.0001)
+        {
+            return followTarget;
+        }
+
+        double maxLeadDistance = FollowTargetMaxLeadDistance;
+        if (leadLength > maxLeadDistance)
+        {
+            double leadScale = maxLeadDistance / leadLength;
+            leadX *= leadScale;
+            leadZ *= leadScale;
+        }
+
+        followTarget.X += leadX;
+        followTarget.Z += leadZ;
+        return followTarget;
     }
 
     private float GetArriveDistance()
@@ -352,6 +402,42 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         return Math.Max(0.6f, entity.SelectionBox.XSize * 0.5f);
+    }
+
+    private float GetFollowMoveSpeed(Vec3d followTarget, double towDistance)
+    {
+        float arriveDistance = GetArriveDistance();
+        double targetDistance = GetHorizontalDistance(entity.ServerPos.XYZ, followTarget);
+        double targetError = Math.Max(0, targetDistance - arriveDistance);
+        double distanceError = targetError;
+
+        if (PushDistance > 0)
+        {
+            double hingeSlowDistance = Math.Max(PushDistance + PushDeadZone, arriveDistance);
+            double hingeError = Math.Max(0, towDistance - hingeSlowDistance);
+            distanceError = Math.Min(distanceError, hingeError);
+        }
+
+        float rampDistance = GetFollowMoveSpeedRampDistance(arriveDistance);
+        float normalizedDistance = rampDistance <= 0.0001f
+            ? 1f
+            : (float)Math.Min(distanceError / rampDistance, 1.0);
+        float easedDistance = (float)Math.Pow(normalizedDistance, FollowMoveSpeedRampCurve);
+        float minSpeed = Math.Max(0.001f, FollowMoveSpeed * FollowMoveSpeedNearFactor);
+        float maxSpeed = Math.Max(minSpeed, FollowMoveSpeed * FollowMoveSpeedFarFactor);
+
+        return minSpeed + (maxSpeed - minSpeed) * easedDistance;
+    }
+
+    private float GetFollowMoveSpeedRampDistance(float arriveDistance)
+    {
+        if (FollowMoveSpeedRampDistance > 0)
+        {
+            return FollowMoveSpeedRampDistance;
+        }
+
+        float followRampDistance = FollowDistance > 0 ? FollowDistance : PushDistance + 0.75f;
+        return Math.Max(arriveDistance, Math.Max(0.5f, followRampDistance));
     }
 
     private Vec3d GetPushDirection(Vec3d directionToHitch)
@@ -377,11 +463,13 @@ public class EntityBehaviorTowable : EntityBehavior
     private void OnPathGoalReached()
     {
         lastRequestedTarget = null;
+        lastRequestedMoveSpeed = 0f;
     }
 
     private void OnPathStuck()
     {
         lastRequestedTarget = null;
+        lastRequestedMoveSpeed = 0f;
         nextRepathMs = 0;
     }
 
@@ -402,6 +490,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private void ResetPathFollowingState()
     {
         lastRequestedTarget = null;
+        lastRequestedMoveSpeed = 0f;
         nextRepathMs = 0;
     }
 
@@ -454,9 +543,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private static float ReadFollowDistance(JsonObject attributes)
     {
         if (attributes?["followDistance"]?.Exists == true)
-        {
-            return Math.Max(0.1f, attributes["followDistance"].AsFloat(2f));
-        }
+            return Math.Max(0f, attributes["followDistance"].AsFloat(2f));
 
         return 2f;
     }
@@ -464,14 +551,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private static float ReadMoveSpeed(JsonObject attributes)
     {
         if (attributes?["followMoveSpeed"]?.Exists == true)
-        {
             return attributes["followMoveSpeed"].AsFloat(0.03f);
-        }
-
-        if (attributes?["moveSpeed"]?.Exists == true)
-        {
-            return attributes["moveSpeed"].AsFloat(0.03f);
-        }
 
         return 0.03f;
     }
@@ -479,14 +559,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private static float ReadArriveDistance(JsonObject attributes)
     {
         if (attributes?["arriveDistance"]?.Exists == true)
-        {
             return attributes["arriveDistance"].AsFloat(0f);
-        }
-
-        if (attributes?["targetDistance"]?.Exists == true)
-        {
-            return attributes["targetDistance"].AsFloat(0f);
-        }
 
         return 0f;
     }
@@ -494,14 +567,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushDistance(JsonObject attributes)
     {
         if (attributes?["pushDistance"]?.Exists == true)
-        {
             return attributes["pushDistance"].AsFloat(PushDistance);
-        }
-
-        if (attributes?["targetTowDistance"]?.Exists == true)
-        {
-            return attributes["targetTowDistance"].AsFloat(PushDistance);
-        }
 
         return PushDistance;
     }
@@ -509,14 +575,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushDeadZone(JsonObject attributes)
     {
         if (attributes?["pushDeadZone"]?.Exists == true)
-        {
             return attributes["pushDeadZone"].AsFloat(PushDeadZone);
-        }
-
-        if (attributes?["towDistanceDeadZone"]?.Exists == true)
-        {
-            return attributes["towDistanceDeadZone"].AsFloat(PushDeadZone);
-        }
 
         return PushDeadZone;
     }
@@ -524,14 +583,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushStrength(JsonObject attributes)
     {
         if (attributes?["pushStrength"]?.Exists == true)
-        {
             return attributes["pushStrength"].AsFloat(PushStrength);
-        }
-
-        if (attributes?["compressionStrength"]?.Exists == true)
-        {
-            return attributes["compressionStrength"].AsFloat(PushStrength);
-        }
 
         return PushStrength;
     }
@@ -539,14 +591,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushCurve(JsonObject attributes)
     {
         if (attributes?["pushCurve"]?.Exists == true)
-        {
             return attributes["pushCurve"].AsFloat(PushCurve);
-        }
-
-        if (attributes?["compressionCurve"]?.Exists == true)
-        {
-            return attributes["compressionCurve"].AsFloat(PushCurve);
-        }
 
         return PushCurve;
     }
@@ -554,14 +599,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushTurnStrength(JsonObject attributes)
     {
         if (attributes?["pushTurnStrength"]?.Exists == true)
-        {
             return attributes["pushTurnStrength"].AsFloat(PushTurnStrength);
-        }
-
-        if (attributes?["compressionTurnStrength"]?.Exists == true)
-        {
-            return attributes["compressionTurnStrength"].AsFloat(PushTurnStrength);
-        }
 
         return PushTurnStrength;
     }
@@ -569,14 +607,7 @@ public class EntityBehaviorTowable : EntityBehavior
     private float ReadPushMaxWalkVector(JsonObject attributes)
     {
         if (attributes?["pushMaxWalkVector"]?.Exists == true)
-        {
             return attributes["pushMaxWalkVector"].AsFloat(PushMaxWalkVector);
-        }
-
-        if (attributes?["maxJointWalkVector"]?.Exists == true)
-        {
-            return attributes["maxJointWalkVector"].AsFloat(PushMaxWalkVector);
-        }
 
         return PushMaxWalkVector;
     }
