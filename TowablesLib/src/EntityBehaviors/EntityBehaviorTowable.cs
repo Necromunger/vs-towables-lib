@@ -370,10 +370,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private float GetArriveDistance()
     {
-        if (ArriveDistance > 0)
-            return ArriveDistance;
-
-        return Math.Max(0.6f, entity.SelectionBox.XSize * 0.5f);
+        return Math.Max(0f, ArriveDistance);
     }
 
     private float GetFollowMoveSpeed(Vec3d towPoint, Vec3d towPointGoal, double towDistance, bool hitchMovingAwayFromTowPoint)
