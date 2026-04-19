@@ -57,7 +57,7 @@ public class TowableDebugRenderer : IRenderer
     private void RenderLine(Vec3d from, Vec3d to, int color)
     {
         BlockPos origin = new((int)Math.Floor(from.X), (int)Math.Floor(from.Y), (int)Math.Floor(from.Z));
-
+        
         capi.Render.LineWidth = 4f;
         capi.Render.RenderLine(
             origin,
