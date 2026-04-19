@@ -11,14 +11,16 @@ public class TowableDebugRenderer : IRenderer
 {
     public double RenderOrder => 0.55;
     public int RenderRange => 999999;
-    
+
     private static readonly int HitchColor = ColorUtil.ToRgba(255, 255, 48, 160);
     private static readonly int TowColor = ColorUtil.ToRgba(255, 255, 48, 48);
+    private static readonly int GoalColor = ColorUtil.ToRgba(255, 48, 220, 255);
     private static readonly int LineColor = ColorUtil.ToRgba(50, 255, 48, 160);
 
     private readonly ICoreClientAPI capi;
     private readonly double hitchMarkerRadius = 0.15;
     private readonly double towMarkerRadius = 0.22;
+    private readonly double goalMarkerRadius = 0.18;
 
     public TowableDebugRenderer(ICoreClientAPI capi)
     {
@@ -40,22 +42,19 @@ public class TowableDebugRenderer : IRenderer
                 continue;
 
             EntityBehaviorTowable towable = entity.GetBehavior<EntityBehaviorTowable>();
-            if (towable == null || !towable.TryGetDebugTowLine(out Vec3d hitchPoint))
-                continue;
-
-            Vec3d towPoint = towable.GetTowPointPosition();
-            if (towPoint == null)
+            if (towable == null || !towable.TryGetDebugTowState(out Vec3d hitchPoint, out Vec3d towPoint, out Vec3d towPointGoal))
                 continue;
 
             RenderMarker(hitchPoint, HitchColor, hitchMarkerRadius);
             RenderMarker(towPoint, TowColor, towMarkerRadius);
-            RenderDebugLine(hitchPoint, towPoint, LineColor);
+            RenderMarker(towPointGoal, GoalColor, goalMarkerRadius);
+            RenderLine(towPoint, towPointGoal, LineColor);
         }
     }
 
     public void Dispose() { }
 
-    private void RenderDebugLine(Vec3d from, Vec3d to, int color)
+    private void RenderLine(Vec3d from, Vec3d to, int color)
     {
         BlockPos origin = new((int)Math.Floor(from.X), (int)Math.Floor(from.Y), (int)Math.Floor(from.Z));
 
@@ -74,8 +73,8 @@ public class TowableDebugRenderer : IRenderer
 
     private void RenderMarker(Vec3d position, int color, double radius)
     {
-        RenderDebugLine(position.AddCopy(-radius, 0, 0), position.AddCopy(radius, 0, 0), color);
-        RenderDebugLine(position.AddCopy(0, -radius, 0), position.AddCopy(0, radius, 0), color);
-        RenderDebugLine(position.AddCopy(0, 0, -radius), position.AddCopy(0, 0, radius), color);
+        RenderLine(position.AddCopy(-radius, 0, 0), position.AddCopy(radius, 0, 0), color);
+        RenderLine(position.AddCopy(0, -radius, 0), position.AddCopy(0, radius, 0), color);
+        RenderLine(position.AddCopy(0, 0, -radius), position.AddCopy(0, 0, radius), color);
     }
 }

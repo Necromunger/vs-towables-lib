@@ -199,6 +199,35 @@ public class EntityBehaviorTowable : EntityBehavior
         return hitchPoint != null;
     }
 
+    public bool TryGetDebugTowState(out Vec3d hitchPoint, out Vec3d towPoint, out Vec3d towPointGoal)
+    {
+        hitchPoint = null;
+        towPoint = null;
+        towPointGoal = null;
+
+        if (disabled || !IsHitched)
+        {
+            return false;
+        }
+
+        ResolveSelectionBoxIndexIfNeeded();
+
+        if (!TryResolveHitch(out Entity debugHitchEntity, out EntityBehaviorHitchable debugEbHitchable))
+        {
+            return false;
+        }
+
+        towPoint = GetTowPointPosition()?.Clone();
+        hitchPoint = GetHitchPointPosition(debugHitchEntity, debugEbHitchable)?.Clone();
+        if (towPoint == null || hitchPoint == null)
+        {
+            return false;
+        }
+
+        towPointGoal = GetFollowTarget(debugHitchEntity, hitchPoint)?.Clone();
+        return towPointGoal != null;
+    }
+
     private bool IsInteractionPoint(EntityAgent byEntity)
     {
         if (!selectionBoxIndexesResolved)
