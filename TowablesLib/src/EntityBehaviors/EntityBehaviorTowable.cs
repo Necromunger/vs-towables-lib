@@ -167,6 +167,7 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
+        // Once unhitched, clear any leftover pathing or push state from the last tow tick.
         if (!IsHitched)
         {
             if (towTraverser?.Active == true || lastRequestedTarget != null || pushActive)
@@ -179,6 +180,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         Entity hitchEntity = entity.World.GetEntityById(HitchEntityId);
         EntityBehaviorHitchable hitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
+        // If the hitch target vanished or lost its behavior, detach cleanly.
         if (hitchEntity == null || hitchable == null)
         {
             ClearHitch();
@@ -188,28 +190,33 @@ public class EntityBehaviorTowable : EntityBehavior
         Vec3d towPoint = GetTowPointPosition();
         Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
         double towDistance = GetHorizontalDistance(towPoint, hitchPoint);
+        // Break the link if the hitch gets too far from the cart's tow point.
         if (towDistance > MaxTowDistance)
         {
             ClearHitch();
             return;
         }
 
+        // Only enter the close-range push branch while the hitch is compressing the gap.
         Vec3d hitchVelocity = GetHorizontalMotion(hitchEntity);
         bool hitchMovingAwayFromTowPoint = IsHitchMovingAwayFromTowPoint(hitchPoint, towPoint, hitchVelocity);
         bool wasPushActive = pushActive;
         pushActive = ShouldUsePush(towDistance) && !hitchMovingAwayFromTowPoint;
         if (pushActive)
         {
+            // Push mode drives movement directly, so path following must stand down for the tick.
             SuspendPathFollowing();
             ApplyPushMovement(hitchVelocity, hitchPoint, towPoint, towDistance, deltaTime);
             return;
         }
 
+        // When compression releases, clear any one-tick reverse input before returning to follow mode.
         if (wasPushActive && !hitchMovingAwayFromTowPoint)
         {
             StopTowableMovement();
         }
 
+        // Normal towing stays in follow mode and lets the speed easing handle catch-up.
         Vec3d followTarget = GetFollowTarget(hitchEntity, hitchPoint);
         float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance, hitchMovingAwayFromTowPoint);
         UpdatePathFollowing(followTarget, followMoveSpeed);
