@@ -11,60 +11,39 @@ namespace TowablesLib.EntityBehaviors;
 
 public class EntityBehaviorTowable : EntityBehavior
 {
+    public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
+    public bool IsHitched => HitchEntityId > 0;
     public string InteractionPoint { get; private set; } = "TowAP";
-
     public string TowPoint { get; private set; } = "TowAP";
 
     public Vec3d TowOffset { get; private set; } = null;
-
     public float HitchSearchRange { get; private set; } = 4f;
-
     public float MaxTowDistance { get; private set; } = 20f;
-
     public float FollowDistance { get; private set; } = 2f;
-
     public float FollowMoveSpeed { get; private set; } = 0.03f;
-
     public float FollowMoveSpeedNearFactor { get; private set; } = 0.4f;
-
     public float FollowMoveSpeedFarFactor { get; private set; } = 1.2f;
-
     public float FollowMoveSpeedRampDistance { get; private set; }
-
     public float FollowMoveSpeedRampCurve { get; private set; } = 1.5f;
-
     public float FollowTargetLeadSeconds { get; private set; } = 0.35f;
-
     public float FollowTargetMaxLeadDistance { get; private set; } = 0.75f;
-
     public float RepathDistanceThreshold { get; private set; } = 1.5f;
 
     public int RepathIntervalMs { get; private set; } = 750;
-
     public int PathSearchDepth { get; private set; } = 1000;
-
     public int PathDistanceTolerance { get; private set; } = 1;
-
     public float ArriveDistance { get; private set; }
-
     public float PushDistance { get; private set; } = 1f;
-
     public float PushDeadZone { get; private set; } = 0.1f;
-
     public float PushStrength { get; private set; } = 7f;
-
     public float PushCurve { get; private set; } = 1.5f;
-
     public float PushTurnStrength { get; private set; } = 1.5f;
-
     public float PushMaxWalkVector { get; private set; } = 0.08f;
-
-    public long HitchEntityId => entity.WatchedAttributes.GetLong(HitchEntityIdAttribute, 0);
-
-    public bool IsHitched => HitchEntityId > 0;
 
     private const string HitchEntityIdAttribute = "towableslib:hitchEntityId";
 
+    private Entity hitchEntity;
+    private EntityBehaviorHitchable ebHitchable;
     private EntityAgent towableAgent = null!;
     private WaypointsTraverser towTraverser = null!;
     private bool disabled;
@@ -124,13 +103,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
     public override void OnInteract(EntityAgent byEntity, ItemSlot itemslot, Vec3d hitPosition, EnumInteractMode mode, ref EnumHandling handled)
     {
-        if (disabled || entity.World.Side != EnumAppSide.Server || mode != EnumInteractMode.Interact)
-        {
-            base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
-            return;
-        }
-
-        if (!IsInteractionPoint(byEntity))
+        if (disabled || entity.World.Side != EnumAppSide.Server || mode != EnumInteractMode.Interact || !IsInteractionPoint(byEntity))
         {
             base.OnInteract(byEntity, itemslot, hitPosition, mode, ref handled);
             return;
@@ -138,12 +111,14 @@ public class EntityBehaviorTowable : EntityBehavior
 
         handled = EnumHandling.Handled;
 
+        // Clear hitch if already hitched
         if (IsHitched)
         {
             ClearHitch();
             return;
         }
 
+        // Find and set hitch
         Entity hitchEntity = FindNearestHitchable();
         if (hitchEntity == null)
             return;
@@ -160,22 +135,11 @@ public class EntityBehaviorTowable : EntityBehavior
 
         ResolveSelectionBoxIndexIfNeeded();
 
-        if (entity.World.Side != EnumAppSide.Server)
+        if (entity.World.Side != EnumAppSide.Server || !IsHitched)
             return;
 
-        // Once unhitched, clear any leftover pathing or push state from the last tow tick.
-        if (!IsHitched)
-        {
-            if (towTraverser?.Active == true || lastRequestedTarget != null || pushActive)
-                StopPathFollowing();
-
-            return;
-        }
-
-        // If the hitch target vanished or lost its behavior, detach cleanly.
-        Entity hitchEntity = entity.World.GetEntityById(HitchEntityId);
-        EntityBehaviorHitchable hitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
-        if (hitchEntity == null || hitchable == null)
+        // If the hitch target vanished, detach cleanly.
+        if (!TryResolveHitch(out Entity checkHitchEntity, out EntityBehaviorHitchable checkEbHitchable))
         {
             ClearHitch();
             return;
@@ -183,7 +147,7 @@ public class EntityBehaviorTowable : EntityBehavior
 
         // Break the link if the hitch gets too far from the cart's tow point.
         Vec3d towPoint = GetTowPointPosition();
-        Vec3d hitchPoint = GetHitchPointPosition(hitchEntity, hitchable);
+        Vec3d hitchPoint = GetHitchPointPosition(checkHitchEntity, checkEbHitchable);
         double towDistance = GetHorizontalDistance(towPoint, hitchPoint);
         if (towDistance > MaxTowDistance)
         {
@@ -192,7 +156,7 @@ public class EntityBehaviorTowable : EntityBehavior
         }
 
         // Only enter the close-range push branch while the hitch is compressing the gap.
-        Vec3d hitchVelocity = GetHorizontalMotion(hitchEntity);
+        Vec3d hitchVelocity = GetHorizontalMotion(checkHitchEntity);
         bool hitchMovingAwayFromTowPoint = IsHitchMovingAwayFromTowPoint(hitchPoint, towPoint, hitchVelocity);
         bool wasPushActive = pushActive;
         pushActive = ShouldUsePush(towDistance) && !hitchMovingAwayFromTowPoint;
@@ -208,8 +172,9 @@ public class EntityBehaviorTowable : EntityBehavior
         if (wasPushActive && !hitchMovingAwayFromTowPoint)
             StopTowableMovement();
 
-        // Normal towing stays in follow mode and lets the speed easing handle catch-up.
-        Vec3d followTarget = GetFollowTarget(hitchEntity, hitchPoint);
+        // Normal towing follows a target for the tow point, then converts that back to an entity target.
+        Vec3d towPointFollowTarget = GetFollowTarget(checkHitchEntity, hitchPoint);
+        Vec3d followTarget = GetEntityFollowTarget(towPointFollowTarget, towPoint);
         float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance, hitchMovingAwayFromTowPoint);
         UpdatePathFollowing(followTarget, followMoveSpeed);
         towTraverser?.OnGameTick(deltaTime);
@@ -217,24 +182,21 @@ public class EntityBehaviorTowable : EntityBehavior
 
     public override string PropertyName() => "towable";
 
-    public bool TryGetDebugTowLine(out Vec3d hitchPoint, out Vec3d towPoint)
+    public bool TryGetDebugTowLine(out Vec3d hitchPoint)
     {
         hitchPoint = null;
-        towPoint = null;
 
         if (disabled || !IsHitched)
             return false;
 
         ResolveSelectionBoxIndexIfNeeded();
 
-        Entity hitchEntity = entity.World.GetEntityById(HitchEntityId);
-        EntityBehaviorHitchable hitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
-        if (hitchEntity == null || hitchable == null)
+        if (!TryResolveHitch(out Entity debugHitchEntity, out EntityBehaviorHitchable debugEbHitchable))
             return false;
 
-        towPoint = GetTowPointPosition()?.Clone();
-        hitchPoint = GetHitchPointPosition(hitchEntity, hitchable)?.Clone();
-        return towPoint != null && hitchPoint != null;
+        hitchPoint = GetHitchPointPosition(debugHitchEntity, debugEbHitchable)?.Clone();
+
+        return hitchPoint != null;
     }
 
     private bool IsInteractionPoint(EntityAgent byEntity)
@@ -258,20 +220,25 @@ public class EntityBehaviorTowable : EntityBehavior
 
     private void SetHitch(long entityId)
     {
+        pushActive = false;
         entity.WatchedAttributes.SetLong(HitchEntityIdAttribute, entityId);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
+        hitchEntity = entity.World.GetEntityById(entityId);
+        ebHitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
         MarkChunkModified();
-        pushActive = false;
         ResetPathFollowingState();
     }
 
     private void ClearHitch()
     {
         pushActive = false;
-        StopPathFollowing();
         entity.WatchedAttributes.RemoveAttribute(HitchEntityIdAttribute);
         entity.WatchedAttributes.MarkPathDirty(HitchEntityIdAttribute);
+        hitchEntity = null;
+        ebHitchable = null;
         MarkChunkModified();
+        ResetPathFollowingState();
+        StopPathFollowing();
     }
 
     private bool ShouldUsePush(double towDistance)
@@ -308,15 +275,12 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
+        // Apply push motion
         towableAgent.ServerControls.StopAllMovement();
         towableAgent.ServerControls.WalkVector.Set(moveDirection.X * moveSpeed, 0, moveDirection.Z * moveSpeed);
         towableAgent.ServerControls.FlyVector.Set(0, 0, 0);
 
-        ApplyPushSteering(hitchPoint, towPoint, normalizedPush, deltaTime);
-    }
-
-    private void ApplyPushSteering(Vec3d hitchPoint, Vec3d towPoint, double normalizedPush, float deltaTime)
-    {
+        // Apply push yaw
         float hingeYaw = (float)Math.Atan2(hitchPoint.X - towPoint.X, hitchPoint.Z - towPoint.Z);
         float yawDelta = AngleRadDistance(entity.ServerPos.Yaw, hingeYaw);
         entity.ServerPos.Yaw += yawDelta * PushTurnStrength * (float)normalizedPush * deltaTime;
@@ -387,6 +351,20 @@ public class EntityBehaviorTowable : EntityBehavior
         followTarget.Z += leadZ;
 
         return followTarget;
+    }
+
+    private Vec3d GetEntityFollowTarget(Vec3d towPointFollowTarget, Vec3d towPoint)
+    {
+        if (towPointFollowTarget == null || towPoint == null)
+        {
+            return entity.ServerPos.XYZ;
+        }
+
+        return entity.ServerPos.XYZ.AddCopy(
+            towPointFollowTarget.X - towPoint.X,
+            towPointFollowTarget.Y - towPoint.Y,
+            towPointFollowTarget.Z - towPoint.Z
+        );
     }
 
     private float GetArriveDistance()
@@ -497,13 +475,39 @@ public class EntityBehaviorTowable : EntityBehavior
         towableAgent.ServerControls.FlyVector.Set(0, 0, 0);
     }
 
+    private bool TryResolveHitch(out Entity resolvedHitchEntity, out EntityBehaviorHitchable resolvedHitchable)
+    {
+        resolvedHitchEntity = null;
+        resolvedHitchable = null;
+
+        if (!IsHitched)
+        {
+            hitchEntity = null;
+            ebHitchable = null;
+            return false;
+        }
+
+        if (hitchEntity?.EntityId != HitchEntityId)
+        {
+            hitchEntity = null;
+            ebHitchable = null;
+        }
+
+        resolvedHitchEntity = hitchEntity ?? entity.World.GetEntityById(HitchEntityId);
+        resolvedHitchable = resolvedHitchEntity?.GetBehavior<EntityBehaviorHitchable>();
+
+        hitchEntity = resolvedHitchEntity;
+        ebHitchable = resolvedHitchable;
+        return resolvedHitchEntity != null && resolvedHitchable != null;
+    }
+
     private static Vec3d GetHitchPointPosition(Entity hitchEntity, EntityBehaviorHitchable hitchable)
     {
         Vec3d localOffset = hitchable.HitchOffset.RotatedCopy(hitchEntity.ServerPos.Yaw);
         return hitchEntity.ServerPos.XYZ.AddCopy(localOffset);
     }
 
-    private Vec3d GetTowPointPosition()
+    public Vec3d GetTowPointPosition()
     {
         if (TowOffset != null)
             return GetTowPointWorldPosition(TowOffset);

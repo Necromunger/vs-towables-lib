@@ -9,6 +9,9 @@ namespace TowablesLib.Rendering;
 
 public class TowableDebugRenderer : IRenderer
 {
+    public double RenderOrder => 0.55;
+    public int RenderRange => 999999;
+    
     private static readonly int HitchColor = ColorUtil.ToRgba(255, 255, 48, 160);
     private static readonly int TowColor = ColorUtil.ToRgba(255, 255, 48, 48);
     private static readonly int LineColor = ColorUtil.ToRgba(50, 255, 48, 160);
@@ -16,10 +19,6 @@ public class TowableDebugRenderer : IRenderer
     private readonly ICoreClientAPI capi;
     private readonly double hitchMarkerRadius = 0.15;
     private readonly double towMarkerRadius = 0.22;
-
-    public double RenderOrder => 0.55;
-
-    public int RenderRange => 999999;
 
     public TowableDebugRenderer(ICoreClientAPI capi)
     {
@@ -29,17 +28,24 @@ public class TowableDebugRenderer : IRenderer
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         if (stage != EnumRenderStage.Opaque)
-        {
             return;
-        }
 
-        foreach (Entity entity in capi.World.LoadedEntities.Values)
+        var loadedEntities = capi.World?.LoadedEntities;
+        if (loadedEntities == null)
+            return;
+
+        foreach (Entity entity in loadedEntities.Values)
         {
-            EntityBehaviorTowable towable = entity.GetBehavior<EntityBehaviorTowable>();
-            if (towable == null || !towable.TryGetDebugTowLine(out Vec3d hitchPoint, out Vec3d towPoint))
-            {
+            if (entity == null)
                 continue;
-            }
+
+            EntityBehaviorTowable towable = entity.GetBehavior<EntityBehaviorTowable>();
+            if (towable == null || !towable.TryGetDebugTowLine(out Vec3d hitchPoint))
+                continue;
+
+            Vec3d towPoint = towable.GetTowPointPosition();
+            if (towPoint == null)
+                continue;
 
             RenderMarker(hitchPoint, HitchColor, hitchMarkerRadius);
             RenderMarker(towPoint, TowColor, towMarkerRadius);
@@ -47,9 +53,7 @@ public class TowableDebugRenderer : IRenderer
         }
     }
 
-    public void Dispose()
-    {
-    }
+    public void Dispose() { }
 
     private void RenderDebugLine(Vec3d from, Vec3d to, int color)
     {
