@@ -15,7 +15,7 @@ public class TowableDebugRenderer : IRenderer
     private static readonly int HitchColor = ColorUtil.ToRgba(255, 255, 48, 160);
     private static readonly int TowColor = ColorUtil.ToRgba(255, 255, 48, 48);
     private static readonly int GoalColor = ColorUtil.ToRgba(255, 48, 220, 255);
-    private static readonly int LineColor = ColorUtil.ToRgba(50, 255, 48, 160);
+    private static readonly int LineColor = ColorUtil.ToRgba(255, 0, 20, 255);
 
     private readonly ICoreClientAPI capi;
     private readonly double hitchMarkerRadius = 0.15;

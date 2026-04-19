@@ -50,9 +50,6 @@ public class EntityBehaviorTowable : EntityBehavior
     private int interactionPointSelectionBoxIndex = -1;
     private int towPointSelectionBoxIndex = -1;
     private bool selectionBoxIndexesResolved;
-    private Vec3d lastRequestedTarget;
-    private float lastRequestedMoveSpeed;
-    private long nextRepathMs;
     private bool pushActive;
 
     public EntityBehaviorTowable(Entity entity) : base(entity) { }
@@ -172,12 +169,11 @@ public class EntityBehaviorTowable : EntityBehavior
         if (wasPushActive && !hitchMovingAwayFromTowPoint)
             StopTowableMovement();
 
-        // Normal towing follows a target for the tow point, then converts that back to an entity target.
+        // Normal towing applies direct forward movement toward the tow point goal.
         Vec3d towPointFollowTarget = GetFollowTarget(checkHitchEntity, hitchPoint);
-        Vec3d followTarget = GetEntityFollowTarget(towPointFollowTarget, towPoint);
-        float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance, hitchMovingAwayFromTowPoint);
-        UpdatePathFollowing(followTarget, followMoveSpeed);
-        towTraverser?.OnGameTick(deltaTime);
+        float followMoveSpeed = GetFollowMoveSpeed(towPoint, towPointFollowTarget, towDistance, hitchMovingAwayFromTowPoint);
+        SuspendPathFollowing();
+        ApplyFollowMovement(towPoint, towPointFollowTarget, followMoveSpeed, deltaTime, hitchMovingAwayFromTowPoint);
     }
 
     public override string PropertyName() => "towable";
@@ -255,7 +251,6 @@ public class EntityBehaviorTowable : EntityBehavior
         hitchEntity = entity.World.GetEntityById(entityId);
         ebHitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
         MarkChunkModified();
-        ResetPathFollowingState();
     }
 
     private void ClearHitch()
@@ -266,7 +261,6 @@ public class EntityBehaviorTowable : EntityBehavior
         hitchEntity = null;
         ebHitchable = null;
         MarkChunkModified();
-        ResetPathFollowingState();
         StopPathFollowing();
     }
 
@@ -315,41 +309,33 @@ public class EntityBehaviorTowable : EntityBehavior
         entity.ServerPos.Yaw += yawDelta * PushTurnStrength * (float)normalizedPush * deltaTime;
     }
 
-    private void UpdatePathFollowing(Vec3d followTarget, float moveSpeed)
+    private void ApplyFollowMovement(Vec3d towPoint, Vec3d towPointGoal, float moveSpeed, float deltaTime, bool hitchMovingAwayFromTowPoint)
     {
-        if (towTraverser == null)
-            return;
-
         float arriveDistance = GetArriveDistance();
-        long nowMs = entity.World.ElapsedMilliseconds;
-
-        if (towTraverser.Ready)
+        double goalDistance = GetHorizontalDistance(towPoint, towPointGoal);
+        if (goalDistance <= arriveDistance)
         {
-            Vec3d currentTarget = towTraverser.CurrentTarget;
-            currentTarget.X = followTarget.X;
-            currentTarget.Y = followTarget.Y;
-            currentTarget.Z = followTarget.Z;
+            if (!hitchMovingAwayFromTowPoint)
+            {
+                StopTowableMovement();
+            }
+
+            return;
         }
 
-        bool shouldStartPath = !towTraverser.Active
-            && followTarget.HorizontalSquareDistanceTo(entity.ServerPos.X, entity.ServerPos.Z) > arriveDistance * arriveDistance;
+        Vec3d moveDirection = new(
+            (towPointGoal.X - towPoint.X) / goalDistance,
+            0,
+            (towPointGoal.Z - towPoint.Z) / goalDistance
+        );
 
-        bool speedChanged = lastRequestedMoveSpeed > 0f && Math.Abs(lastRequestedMoveSpeed - moveSpeed) > 0.0005f;
+        towableAgent.ServerControls.StopAllMovement();
+        towableAgent.ServerControls.WalkVector.Set(moveDirection.X * moveSpeed, 0, moveDirection.Z * moveSpeed);
+        towableAgent.ServerControls.FlyVector.Set(0, 0, 0);
 
-        bool shouldRepath = towTraverser.Active
-            && towTraverser.Ready
-            && (speedChanged || (lastRequestedTarget != null && lastRequestedTarget.HorizontalSquareDistanceTo(followTarget.X, followTarget.Z) > RepathDistanceThreshold * RepathDistanceThreshold))
-            && nowMs >= nextRepathMs;
-
-        if (!shouldStartPath && !shouldRepath)
-            return;
-
-        if (!towTraverser.NavigateTo_Async(followTarget.Clone(), moveSpeed, arriveDistance, OnPathGoalReached, OnPathStuck, null, PathSearchDepth, PathDistanceTolerance))
-            return;
-
-        lastRequestedTarget = followTarget.Clone();
-        lastRequestedMoveSpeed = moveSpeed;
-        nextRepathMs = nowMs + RepathIntervalMs;
+        float goalYaw = (float)Math.Atan2(towPointGoal.X - towPoint.X, towPointGoal.Z - towPoint.Z);
+        float yawDelta = AngleRadDistance(entity.ServerPos.Yaw, goalYaw);
+        entity.ServerPos.Yaw += yawDelta * PushTurnStrength * deltaTime;
     }
 
     private Vec3d GetFollowTarget(Entity hitchEntity, Vec3d hitchPoint)
@@ -382,20 +368,6 @@ public class EntityBehaviorTowable : EntityBehavior
         return followTarget;
     }
 
-    private Vec3d GetEntityFollowTarget(Vec3d towPointFollowTarget, Vec3d towPoint)
-    {
-        if (towPointFollowTarget == null || towPoint == null)
-        {
-            return entity.ServerPos.XYZ;
-        }
-
-        return entity.ServerPos.XYZ.AddCopy(
-            towPointFollowTarget.X - towPoint.X,
-            towPointFollowTarget.Y - towPoint.Y,
-            towPointFollowTarget.Z - towPoint.Z
-        );
-    }
-
     private float GetArriveDistance()
     {
         if (ArriveDistance > 0)
@@ -404,10 +376,10 @@ public class EntityBehaviorTowable : EntityBehavior
         return Math.Max(0.6f, entity.SelectionBox.XSize * 0.5f);
     }
 
-    private float GetFollowMoveSpeed(Vec3d followTarget, double towDistance, bool hitchMovingAwayFromTowPoint)
+    private float GetFollowMoveSpeed(Vec3d towPoint, Vec3d towPointGoal, double towDistance, bool hitchMovingAwayFromTowPoint)
     {
         float arriveDistance = GetArriveDistance();
-        double targetDistance = GetHorizontalDistance(entity.ServerPos.XYZ, followTarget);
+        double targetDistance = GetHorizontalDistance(towPoint, towPointGoal);
         double targetError = Math.Max(0, targetDistance - arriveDistance);
         double distanceError = targetError;
 
@@ -463,38 +435,16 @@ public class EntityBehaviorTowable : EntityBehavior
         return to - from;
     }
 
-    private void OnPathGoalReached()
-    {
-        lastRequestedTarget = null;
-        lastRequestedMoveSpeed = 0f;
-    }
-
-    private void OnPathStuck()
-    {
-        lastRequestedTarget = null;
-        lastRequestedMoveSpeed = 0f;
-        nextRepathMs = 0;
-    }
-
     private void StopPathFollowing()
     {
         towTraverser?.Stop();
         pushActive = false;
-        ResetPathFollowingState();
         StopTowableMovement();
     }
 
     private void SuspendPathFollowing()
     {
         towTraverser?.Stop();
-        ResetPathFollowingState();
-    }
-
-    private void ResetPathFollowingState()
-    {
-        lastRequestedTarget = null;
-        lastRequestedMoveSpeed = 0f;
-        nextRepathMs = 0;
     }
 
     private void StopTowableMovement()
