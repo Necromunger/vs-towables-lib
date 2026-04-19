@@ -9,9 +9,9 @@ namespace TowablesLib.Rendering;
 
 public class TowableDebugRenderer : IRenderer
 {
-    private const int HitchColor = unchecked((int)0xFFFF30A0);
-    private const int TowColor = unchecked((int)0xFFFF3030);
-    private const int DebugLineColor = unchecked((int)0xFFFF30A0);
+    private static readonly int HitchColor = ColorUtil.ToRgba(255, 255, 48, 160);
+    private static readonly int TowColor = ColorUtil.ToRgba(255, 255, 48, 48);
+    private static readonly int LineColor = ColorUtil.ToRgba(50, 255, 48, 160);
 
     private readonly ICoreClientAPI capi;
     private readonly double hitchMarkerRadius = 0.15;
@@ -43,7 +43,7 @@ public class TowableDebugRenderer : IRenderer
 
             RenderMarker(hitchPoint, HitchColor, hitchMarkerRadius);
             RenderMarker(towPoint, TowColor, towMarkerRadius);
-            RenderDebugLine(hitchPoint, towPoint, DebugLineColor);
+            RenderDebugLine(hitchPoint, towPoint, LineColor);
         }
     }
 

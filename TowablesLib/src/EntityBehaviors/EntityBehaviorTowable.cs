@@ -194,22 +194,24 @@ public class EntityBehaviorTowable : EntityBehavior
             return;
         }
 
+        Vec3d hitchVelocity = GetHorizontalMotion(hitchEntity);
+        bool hitchMovingAwayFromTowPoint = IsHitchMovingAwayFromTowPoint(hitchPoint, towPoint, hitchVelocity);
         bool wasPushActive = pushActive;
-        pushActive = ShouldUsePush(towDistance);
+        pushActive = ShouldUsePush(towDistance) && !hitchMovingAwayFromTowPoint;
         if (pushActive)
         {
             SuspendPathFollowing();
-            ApplyPushMovement(hitchPoint, towPoint, towDistance, deltaTime);
+            ApplyPushMovement(hitchVelocity, hitchPoint, towPoint, towDistance, deltaTime);
             return;
         }
 
-        if (wasPushActive)
+        if (wasPushActive && !hitchMovingAwayFromTowPoint)
         {
             StopTowableMovement();
         }
 
         Vec3d followTarget = GetFollowTarget(hitchEntity, hitchPoint);
-        float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance);
+        float followMoveSpeed = GetFollowMoveSpeed(followTarget, towDistance, hitchMovingAwayFromTowPoint);
         UpdatePathFollowing(followTarget, followMoveSpeed);
         towTraverser?.OnGameTick(deltaTime);
     }
@@ -297,7 +299,7 @@ public class EntityBehaviorTowable : EntityBehavior
         return pushActive ? towDistance <= exitDistance : towDistance < enterDistance;
     }
 
-    private void ApplyPushMovement(Vec3d hitchPoint, Vec3d towPoint, double towDistance, float deltaTime)
+    private void ApplyPushMovement(Vec3d hitchVelocity, Vec3d hitchPoint, Vec3d towPoint, double towDistance, float deltaTime)
     {
         double activeError = PushDistance - towDistance - PushDeadZone;
         if (activeError <= 0)
@@ -314,7 +316,12 @@ public class EntityBehaviorTowable : EntityBehavior
         double normalizedPush = Math.Min(activeError / responseRange, 1.0);
         double response = Math.Pow(normalizedPush, PushCurve);
         double moveSpeed = Math.Min(response * PushStrength * deltaTime, PushMaxWalkVector);
-        Vec3d moveDirection = GetPushDirection(directionToHitch);
+        Vec3d moveDirection = GetPushDirection(directionToHitch, hitchVelocity);
+        if (moveDirection == null || moveDirection.X * moveDirection.X + moveDirection.Z * moveDirection.Z <= 0.000001)
+        {
+            StopTowableMovement();
+            return;
+        }
 
         towableAgent.ServerControls.StopAllMovement();
         towableAgent.ServerControls.WalkVector.Set(moveDirection.X * moveSpeed, 0, moveDirection.Z * moveSpeed);
@@ -429,14 +436,14 @@ public class EntityBehaviorTowable : EntityBehavior
         return Math.Max(0.6f, entity.SelectionBox.XSize * 0.5f);
     }
 
-    private float GetFollowMoveSpeed(Vec3d followTarget, double towDistance)
+    private float GetFollowMoveSpeed(Vec3d followTarget, double towDistance, bool hitchMovingAwayFromTowPoint)
     {
         float arriveDistance = GetArriveDistance();
         double targetDistance = GetHorizontalDistance(entity.ServerPos.XYZ, followTarget);
         double targetError = Math.Max(0, targetDistance - arriveDistance);
         double distanceError = targetError;
 
-        if (PushDistance > 0)
+        if (!hitchMovingAwayFromTowPoint && PushDistance > 0)
         {
             double hingeSlowDistance = Math.Max(PushDistance + PushDeadZone, arriveDistance);
             double hingeError = Math.Max(0, towDistance - hingeSlowDistance);
@@ -464,12 +471,22 @@ public class EntityBehaviorTowable : EntityBehavior
         return Math.Max(arriveDistance, Math.Max(0.5f, followRampDistance));
     }
 
-    private Vec3d GetPushDirection(Vec3d directionToHitch)
+    private Vec3d GetPushDirection(Vec3d directionToHitch, Vec3d hitchVelocity)
     {
         Vec3d towableForward = GetTowableForward();
         double forwardPressure = directionToHitch.Dot(towableForward);
-        double directionMultiplier = forwardPressure >= 0 ? -1 : 1;
-        return towableForward.Mul(directionMultiplier);
+
+        if (forwardPressure >= 0)
+        {
+            if (!IsHitchMovingTowardTowPoint(directionToHitch, hitchVelocity))
+            {
+                return new Vec3d();
+            }
+
+            return towableForward.Mul(-1);
+        }
+
+        return towableForward;
     }
 
     private Vec3d GetTowableForward()
@@ -727,6 +744,35 @@ public class EntityBehaviorTowable : EntityBehavior
     private static Vec3d GetOffsetPosition(Entity pointEntity, Vec3d localOffset)
     {
         return pointEntity.ServerPos.XYZ.AddCopy(localOffset.RotatedCopy(pointEntity.ServerPos.Yaw));
+    }
+
+    private static Vec3d GetHorizontalMotion(Entity movingEntity)
+    {
+        return new Vec3d(movingEntity.ServerPos.Motion.X, 0, movingEntity.ServerPos.Motion.Z);
+    }
+
+    private static bool IsHitchMovingTowardTowPoint(Vec3d directionToHitch, Vec3d hitchVelocity)
+    {
+        return GetTowPointApproachSpeed(directionToHitch, hitchVelocity) > 0.0001;
+    }
+
+    private static bool IsHitchMovingAwayFromTowPoint(Vec3d hitchPoint, Vec3d towPoint, Vec3d hitchVelocity)
+    {
+        double towDistance = GetHorizontalDistance(towPoint, hitchPoint);
+        if (towDistance <= 0.0001)
+        {
+            return false;
+        }
+
+        Vec3d directionToHitch = new Vec3d((hitchPoint.X - towPoint.X) / towDistance, 0, (hitchPoint.Z - towPoint.Z) / towDistance);
+        return GetTowPointApproachSpeed(directionToHitch, hitchVelocity) < -0.0001;
+    }
+
+    private static double GetTowPointApproachSpeed(Vec3d directionToHitch, Vec3d hitchVelocity)
+    {
+        return
+            (-directionToHitch.X * hitchVelocity.X) +
+            (-directionToHitch.Z * hitchVelocity.Z);
     }
 
     private static double GetHorizontalDistance(Vec3d from, Vec3d to)
