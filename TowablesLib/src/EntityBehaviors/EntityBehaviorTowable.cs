@@ -1,4 +1,5 @@
 using System;
+using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Datastructures;
@@ -215,6 +216,30 @@ public class EntityBehaviorTowable : EntityBehavior
 
     public override string PropertyName() => "towable";
 
+    public bool TryGetDebugTowLine(out Vec3d hitchPoint, out Vec3d towPoint)
+    {
+        hitchPoint = null;
+        towPoint = null;
+
+        if (disabled || !IsHitched)
+        {
+            return false;
+        }
+
+        ResolveSelectionBoxIndexIfNeeded();
+
+        Entity hitchEntity = entity.World.GetEntityById(HitchEntityId);
+        EntityBehaviorHitchable hitchable = hitchEntity?.GetBehavior<EntityBehaviorHitchable>();
+        if (hitchEntity == null || hitchable == null)
+        {
+            return false;
+        }
+
+        towPoint = GetTowPointPosition()?.Clone();
+        hitchPoint = GetHitchPointPosition(hitchEntity, hitchable)?.Clone();
+        return towPoint != null && hitchPoint != null;
+    }
+
     private bool IsInteractionPoint(EntityAgent byEntity)
     {
         if (!selectionBoxIndexesResolved)
@@ -425,7 +450,6 @@ public class EntityBehaviorTowable : EntityBehavior
         float easedDistance = (float)Math.Pow(normalizedDistance, FollowMoveSpeedRampCurve);
         float minSpeed = Math.Max(0.001f, FollowMoveSpeed * FollowMoveSpeedNearFactor);
         float maxSpeed = Math.Max(minSpeed, FollowMoveSpeed * FollowMoveSpeedFarFactor);
-
         return minSpeed + (maxSpeed - minSpeed) * easedDistance;
     }
 
@@ -511,21 +535,193 @@ public class EntityBehaviorTowable : EntityBehavior
     {
         if (TowOffset != null)
         {
-            return GetOffsetPosition(entity, TowOffset);
+            return GetTowPointWorldPosition(TowOffset);
         }
 
-        var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
-        if (selectionBoxes != null && towPointSelectionBoxIndex >= 0 && towPointSelectionBoxIndex < selectionBoxes.Length)
+        Vec3d selectionBoxCenter = GetTowPointSelectionBoxCenter();
+        if (selectionBoxCenter != null)
         {
-            var attachPoint = selectionBoxes[towPointSelectionBoxIndex].AttachPoint;
-            if (attachPoint != null)
-            {
-                Vec3d offset = new Vec3d(attachPoint.PosX / 16.0, attachPoint.PosY / 16.0, attachPoint.PosZ / 16.0);
-                return GetOffsetPosition(entity, offset);
-            }
+            return selectionBoxCenter;
         }
 
-        return entity.ServerPos.XYZ;
+        Vec3d towPointLocalOffset = GetTowPointLocalOffset();
+        if (towPointLocalOffset == null)
+        {
+            return entity.ServerPos.XYZ;
+        }
+
+        return GetTowPointWorldPosition(towPointLocalOffset);
+    }
+
+    private Vec3d GetTowPointLocalOffset()
+    {
+        if (TowOffset != null)
+        {
+            return TowOffset;
+        }
+
+        Vec3d resolvedAttachPointOffset = GetTowPointResolvedAttachPointLocalOffset();
+        if (resolvedAttachPointOffset != null)
+        {
+            return resolvedAttachPointOffset;
+        }
+
+        Vec3d animatedOffset = GetTowPointAnimatedLocalOffset();
+        if (animatedOffset != null && IsReasonableTowPointLocalOffset(animatedOffset))
+        {
+            return animatedOffset;
+        }
+
+        return GetTowPointRawAttachPointLocalOffset();
+    }
+
+    private static bool IsReasonableTowPointLocalOffset(Vec3d localOffset)
+    {
+        const double maxLocalOffset = 8.0;
+        return localOffset.SquareDistanceTo(0, 0, 0) <= maxLocalOffset * maxLocalOffset;
+    }
+
+    private Vec3d GetTowPointAnimatedLocalOffset()
+    {
+        var selectionBox = GetTowPointSelectionBox();
+        var animModelMatrix = selectionBox?.AnimModelMatrix;
+        var attachPoint = selectionBox?.AttachPoint;
+        if (animModelMatrix == null || animModelMatrix.Length < 16 || attachPoint == null)
+        {
+            return null;
+        }
+
+        return TransformModelPointToLocalOffset(animModelMatrix, attachPoint.PosX, attachPoint.PosY, attachPoint.PosZ);
+    }
+
+    private Vec3d GetTowPointResolvedAttachPointLocalOffset()
+    {
+        var attachPoint = GetTowPointSelectionBox()?.AttachPoint;
+        if (attachPoint == null)
+        {
+            return null;
+        }
+
+        ShapeElement parentElement = attachPoint.ParentElement;
+        if (parentElement?.GetInverseModelMatrix() is float[] inverseModelMatrix && inverseModelMatrix.Length >= 16)
+        {
+            float[] modelMatrix = Mat4f.Create();
+            Mat4f.Invert(modelMatrix, inverseModelMatrix);
+            return TransformModelPointToLocalOffset(modelMatrix, attachPoint.PosX, attachPoint.PosY, attachPoint.PosZ);
+        }
+
+        Vec3d rawOffset = GetTowPointRawAttachPointLocalOffset();
+        if (rawOffset == null)
+        {
+            return null;
+        }
+
+        Vec3d resolvedOffset = rawOffset.Clone();
+        while (parentElement != null)
+        {
+            if (parentElement.From != null && parentElement.From.Length >= 3)
+            {
+                resolvedOffset.X += parentElement.From[0] / 16.0;
+                resolvedOffset.Y += parentElement.From[1] / 16.0;
+                resolvedOffset.Z += parentElement.From[2] / 16.0;
+            }
+
+            parentElement = parentElement.ParentElement;
+        }
+
+        return resolvedOffset;
+    }
+
+    private Vec3d GetTowPointRawAttachPointLocalOffset()
+    {
+        var attachPoint = GetTowPointSelectionBox()?.AttachPoint;
+        if (attachPoint == null)
+        {
+            return null;
+        }
+
+        return new Vec3d(attachPoint.PosX / 16.0, attachPoint.PosY / 16.0, attachPoint.PosZ / 16.0);
+    }
+
+    private Vec3d GetTowPointSelectionBoxCenter()
+    {
+        var selectionBox = GetTowPointSelectionBox();
+        if (selectionBox?.AnimModelMatrix == null || selectionBox.AnimModelMatrix.Length < 16)
+        {
+            return null;
+        }
+
+        ShapeElement parentElement = selectionBox.AttachPoint?.ParentElement;
+        if (parentElement?.From == null || parentElement.To == null || parentElement.From.Length < 3 || parentElement.To.Length < 3)
+        {
+            return null;
+        }
+
+        Matrixf boxTransform = new Matrixf();
+        boxTransform.Identity();
+        ApplyTowPointSelectionBoxTransform(boxTransform, selectionBox, parentElement);
+
+        Vec4d boxCenter = new(
+            (parentElement.To[0] - parentElement.From[0]) / 32.0,
+            (parentElement.To[1] - parentElement.From[1]) / 32.0,
+            (parentElement.To[2] - parentElement.From[2]) / 32.0,
+            1.0
+        );
+
+        return boxTransform.TransformVector(boxCenter).XYZ.Add(entity.Pos.XYZ);
+    }
+
+    private AttachmentPointAndPose GetTowPointSelectionBox()
+    {
+        var selectionBoxes = entity.GetBehavior<EntityBehaviorSelectionBoxes>()?.selectionBoxes;
+        if (selectionBoxes == null || towPointSelectionBoxIndex < 0 || towPointSelectionBoxIndex >= selectionBoxes.Length)
+        {
+            return null;
+        }
+
+        return selectionBoxes[towPointSelectionBoxIndex];
+    }
+
+    private Vec3d GetTowPointWorldPosition(Vec3d localOffset)
+    {
+        return localOffset == null ? null : GetOffsetPosition(entity, localOffset);
+    }
+
+    private void ApplyTowPointSelectionBoxTransform(Matrixf boxTransform, AttachmentPointAndPose selectionBox, ShapeElement parentElement)
+    {
+        EntityShapeRenderer entityShapeRenderer = entity.Properties.Client?.Renderer as EntityShapeRenderer;
+
+        boxTransform.RotateY((float)Math.PI / 2f + entity.SidedPos.Yaw);
+
+        if (entityShapeRenderer != null)
+        {
+            boxTransform.Translate(0f, entity.SelectionBox.Y2 / 2f, 0f);
+            boxTransform.RotateX(entityShapeRenderer.xangle);
+            boxTransform.RotateY(entityShapeRenderer.yangle);
+            boxTransform.RotateZ(entityShapeRenderer.zangle);
+            boxTransform.Translate(0f, -entity.SelectionBox.Y2 / 2f, 0f);
+        }
+
+        boxTransform.Translate(0f, 0.7f, 0f);
+        boxTransform.RotateX(entityShapeRenderer?.nowSwivelRad ?? 0f);
+        boxTransform.Translate(0f, -0.7f, 0f);
+
+        float size = entity.Properties.Client?.Size ?? 1f;
+        boxTransform.Scale(size, size, size);
+        boxTransform.Translate(-0.5f, 0f, -0.5f);
+        boxTransform.Mul(selectionBox.AnimModelMatrix);
+
+        float scaleX = (float)(parentElement.To[0] - parentElement.From[0]) / 16f;
+        float scaleY = (float)(parentElement.To[1] - parentElement.From[1]) / 16f;
+        float scaleZ = (float)(parentElement.To[2] - parentElement.From[2]) / 16f;
+        boxTransform.Scale(scaleX, scaleY, scaleZ);
+    }
+
+    private static Vec3d TransformModelPointToLocalOffset(float[] modelMatrix, double x, double y, double z)
+    {
+        Vec3f transformed = new();
+        Mat4f.MulWithVec3_Position(modelMatrix, (float)x, (float)y, (float)z, transformed);
+        return new Vec3d(transformed.X / 16.0, transformed.Y / 16.0, transformed.Z / 16.0);
     }
 
     private static Vec3d GetOffsetPosition(Entity pointEntity, Vec3d localOffset)
